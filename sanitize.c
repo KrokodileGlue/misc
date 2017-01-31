@@ -2,11 +2,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* cleans up brainfuck by removing dead code and redundant
- * pointer movement / cell arithmetic commands. */
+/* cleans up brainfuck by removing dead code, comments,
+ * and redundant pointer movement / cell arithmetic commands. */
 
 void sanitize(char* str)
 {
+	if (!str)
+		return;
+
 #define SANITIZER_IS_BF_COMMAND(c) (   \
         c == '<' || c == '>'     \
         || c == '+' || c == '-'  \
@@ -83,6 +86,7 @@ void sanitize(char* str)
 	}
 	*out = '\0';
 	strcpy(str, buf);
+	free(buf);
 
 	if (strlen(str) < starting_len) {
 		sanitize(str);
