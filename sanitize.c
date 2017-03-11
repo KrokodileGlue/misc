@@ -60,12 +60,11 @@ void sanitize(char* str)
 		} else if (!strncmp(i, "][", 2)) {
 			i += 2;
 			int depth = 1;
-			while (*i != '\0' && depth) {
+			do {
+				i++;
 				if (*i == '[') depth++;
 				else if (*i == ']') depth--;
-				i++;
-			}
-			i--;
+			} while (depth && *i);
 		}
 		else if (BFSAN_IS_BF_COMMAND(*i)) *out++ = *i++;
 		else i++;
