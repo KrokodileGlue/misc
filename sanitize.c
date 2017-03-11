@@ -2,72 +2,60 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* cleans up brainfuck by removing dead code, comments,
- * and redundant pointer movement / cell arithmetic commands. */
-
+/* removes dead code, comments, redundant pointer movement and
+ * redundant arithmetic commands in brainfuck programs. */
 void sanitize(char* str)
 {
-	if (!str)
-		return;
-
-#define SANITIZER_IS_BF_COMMAND(c) (   \
+#define BFSAN_IS_BF_COMMAND(c) ( \
         c == '<' || c == '>'     \
         || c == '+' || c == '-'  \
         || c == '[' || c == ']'  \
         || c == ',' || c == '.')
 
-#define SANITIZER_ADD(a, c) \
-        if (a >= 0) { \
+#define BFSAN_ADD(a, c)                                              \
+        if (a >= 0) {                                                \
                 for (int counter = 0; counter < abs(a); counter++) { \
-                        *c++ = '+'; \
-                } \
-        } else { \
+                        *c++ = '+';                                  \
+                }                                                    \
+        } else {                                                     \
     	        for (int counter = 0; counter < abs(a); counter++) { \
-                        *c++ = '-'; \
-                } \
+                        *c++ = '-';                                  \
+                }                                                    \
         }
 
-#define SANITIZER_MOVE_PTR(a, c) \
-    if (a >= 0) { \
-        for (int counter = 0; counter < abs(a); counter++) { \
-            *c++ = '>'; \
-        } \
-    } else { \
-    	for (int counter = 0; counter < abs(a); counter++) { \
-            *c++ = '<'; \
-        } \
-    }
+#define BFSAN_MOVE_PTR(a, c)                                       \
+        if (a >= 0)                                                \
+                for (int counter = 0; counter < abs(a); counter++) \
+                        *c++ = '>';                                \
+        else                                                       \
+                for (int counter = 0; counter < abs(a); counter++) \
+                        *c++ = '<';
 
-#define SANITIZER_IS_CONTRACTABLE(c) (     \
-        c == '<' || c == '>'     \
-        || c == '+' || c == '-')
+	if (!str) return;
 
-	char* buf = malloc(strlen(str) + 1);
+	size_t starting_len = strlen(str);
+	char* i = str, *out = str;
 
-	size_t starting_len;
-	char* i, *out;
-
-	starting_len = strlen(str);
-	i = str, out = buf;
-
-	while (*i != '\0') {
-		if (SANITIZER_IS_CONTRACTABLE(*i)) {
+	while (*i) {
+		if (*i == '+' || *i == '-' || *i == '<' || *i == '>') {
 			if (*i == '+' || *i == '-') {
 				int sum = 0;
 				while (*i == '+' || *i == '-') {
 					if (*i == '+') sum++;
 					else sum--;
+
 					i++;
 				}
-				SANITIZER_ADD(sum, out)
+				BFSAN_ADD(sum, out)
 			} else {
 				int sum = 0;
 				while (*i == '>' || *i == '<') {
 					if (*i == '>') sum++;
 					else sum--;
+
 					i++;
 				}
-				SANITIZER_MOVE_PTR(sum, out)
+				BFSAN_MOVE_PTR(sum, out)
 			}
 		} else if (!strncmp(i, "][", 2)) {
 			i += 2;
@@ -78,24 +66,21 @@ void sanitize(char* str)
 				i++;
 			}
 			i--;
-		} else if (SANITIZER_IS_BF_COMMAND(*i)) {
-			*out++ = *i++;
-		} else {
-			i++;
 		}
+		else if (BFSAN_IS_BF_COMMAND(*i)) *out++ = *i++;
+		else i++;
 	}
-	*out = '\0';
-	strcpy(str, buf);
-	free(buf);
+	*out = 0;
 
-	if (strlen(str) < starting_len) {
-		sanitize(str);
-	}
+	if (strlen(str) < starting_len) sanitize(str);
+#undef BFSAN_IS_BF_COMMAND
+#undef BFSAN_ADD
+#undef BFSAN_MOVE_PTR
 }
 
 int main()
 {
-	char test[] = "++++++++++++++----[>++++++++++<-][-][-][-]><><><>><><++++++++----.";
+	char test[] = "+++++ comments! +++++ redundant addition/subtraction: -----+++++ [>++++++++++<-] dead code: [-] [-] redundant pointer movements: >>>>><<<<++++.";
 	printf("before: \"%s\"\n", test);
 	sanitize(test);
 	printf("after: \"%s\"\n", test);
