@@ -15,8 +15,9 @@ struct Op {
 		POSTFIX = 1 << 2
 	} type;
 } operators[] = {
-	{ '(', 12, LEFT,  INFIX  },
-	{ '+', 11, LEFT,  PREFIX },
+	{ '(', 14, LEFT,  INFIX  }, /* for function call syntax */
+	{ ',', 6,  RIGHT, INFIX  },
+	{ '+', 12, LEFT,  PREFIX },
 	{ '-', 11, LEFT,  PREFIX },
 	{ '+', 7,  LEFT,  INFIX  },
 	{ '-', 7,  LEFT,  INFIX  },
@@ -26,7 +27,6 @@ struct Op {
 	{ ':', 5,  LEFT,  INFIX  },
 	{ '=', 3,  LEFT,  INFIX  },
 	{ '(', 2,  LEFT,  PREFIX },
-	{ ',', 1, RIGHT, INFIX  }
 };
 
 struct Expr {
@@ -84,13 +84,15 @@ struct Expr *parse(int prec)
 		left->type = EXPR_PREFIX;
 		left->op = *c;
 		c++;
-		left->prefix_operand = parse(prefix_op->prec);
 		if (left->op == '(') {
+			left->prefix_operand = parse(15);
 			if (*c != ')') {
-				printf("expected ')', got '%c'\n", *c);
+				printf("(prefix) expected ')', got '%c'\n", *c);
 				exit(EXIT_FAILURE);
 			}
 			c++;
+		} else {
+			left->prefix_operand = parse(prefix_op->prec);
 		}
 	} else if (isalpha(*c)) {
 		left->type = EXPR_STR;
@@ -135,9 +137,9 @@ struct Expr *parse(int prec)
 			e->op = *c;
 			e->call = left;
 			c++;
-			e->arguments = parse(prec);
+			e->arguments = parse(0);
 			if (*c != ')') {
-				printf("expected ')', got '%c'\n", *c);
+				printf("(infix) expected ')', got '%c'\n", *c);
 				exit(EXIT_FAILURE);
 			}
 			c++;
