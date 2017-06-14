@@ -124,7 +124,7 @@ struct Expr *parse(int prec)
 			e->op = *c;
 			e->condition = left;
 			c++;
-			e->then_branch = parse(prec);
+			e->then_branch = parse(0);
 			if (*c != ':') {
 				printf("expected ':', got '%c'\n", *c);
 				exit(EXIT_FAILURE);
