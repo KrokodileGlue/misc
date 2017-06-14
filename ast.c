@@ -195,6 +195,7 @@ void print(struct Expr *e)
 
 int main(int argc, char **argv)
 {
+	printf("%s:\n\t", argv[1]);
 	c = argv[1];
 	print(parse(0));
 	putchar('\n');
