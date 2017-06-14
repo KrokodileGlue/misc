@@ -24,7 +24,6 @@ struct Op {
 	{ '*', 9,  LEFT,  INFIX  },
 	{ '/', 9,  LEFT,  INFIX  },
 	{ '?', 5,  LEFT,  INFIX  },
-	{ ':', 5,  LEFT,  INFIX  },
 	{ '=', 3,  LEFT,  INFIX  },
 	{ '(', 2,  LEFT,  PREFIX },
 };
@@ -85,7 +84,7 @@ struct Expr *parse(int prec)
 		left->op = *c;
 		c++;
 		if (left->op == '(') {
-			left->prefix_operand = parse(15);
+			left->prefix_operand = parse(0);
 			if (*c != ')') {
 				printf("(prefix) expected ')', got '%c'\n", *c);
 				exit(EXIT_FAILURE);
@@ -168,11 +167,11 @@ void print(struct Expr *e)
 			printf(")");
 		}
 	} else if (e->type == EXPR_BINARY) {
-		printf("(");
+		if (e->op != ',') printf("(");
 		print(e->left);
 		printf(" %c ", e->op);
 		print(e->right);
-		printf(")");
+		if (e->op != ',') printf(")");
 	} else if (e->type == EXPR_STR) {
 		printf("%c", e->str);
 	} else if (e->type == EXPR_NUMBER) {
