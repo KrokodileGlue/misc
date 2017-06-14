@@ -179,9 +179,9 @@ void print(struct Expr *e)
 	} else if (e->type == EXPR_CALL) {
 		printf("(");
 		print(e->call);
-		printf(" with ");
+		printf(" with (");
 		print(e->arguments);
-		printf(")");
+		printf("))");
 	} else if (e->type == EXPR_MIXFIX) {
 		printf("(if ");
 		print(e->condition);
