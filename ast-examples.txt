@@ -1,0 +1,82 @@
+expression:
+	-5!
+syntax tree:
+	(prefix -)
+	`--(postfix !)
+	   `--(value 5)
+parenthesized:
+	(-(5 !))
+
+expression:
+	-(2*2?2:5)(1?4+3*4:5,2-2-2)
+syntax tree:
+	(prefix -)
+	`--(function (if (2 * 2) then 2 else 5))
+	   |--(ternary)
+	   |  |--(value 1)
+	   |  |--(binary +)
+	   |  |  |--(value 4)
+	   |  |  `--(binary *)
+	   |  |     |--(value 3)
+	   |  |     `--(value 4)
+	   |  `--(value 5)
+	   `--(binary -)
+	      |--(binary -)
+	      |  |--(value 2)
+	      |  `--(value 2)
+	      `--(value 2)
+parenthesized:
+	(-((if (2 * 2) then 2 else 5) with <(if 1 then (4 + (3 * 4)) else 5), ((2 - 2) - 2)>))
+
+expression:
+	a(1,2,3)
+syntax tree:
+	(function a)
+	|--(value 1)
+	|--(value 2)
+	`--(value 3)
+parenthesized:
+	(a with <1, 2, 3>)
+
+expression:
+	-a(1)
+syntax tree:
+	(prefix -)
+	`--(function a)
+	   `--(value 1)
+parenthesized:
+	(-(a with <1>))
+
+expression:
+	(a*2)(1,2)
+syntax tree:
+	(function (a * 2))
+	|--(value 1)
+	`--(value 2)
+parenthesized:
+	((a * 2) with <1, 2>)
+
+expression:
+	4*3+5,(4+3)*5,4+3*5
+syntax tree:
+	(binary ,)
+	|--(binary +)
+	|  |--(binary *)
+	|  |  |--(value 4)
+	|  |  `--(value 3)
+	|  `--(value 5)
+	`--(binary ,)
+	   |--(binary *)
+	   |  |--(group)
+	   |  |  `--(binary +)
+	   |  |     |--(value 4)
+	   |  |     `--(value 3)
+	   |  `--(value 5)
+	   `--(binary +)
+	      |--(value 4)
+	      `--(binary *)
+	         |--(value 3)
+	         `--(value 5)
+parenthesized:
+	(((4 * 3) + 5) , (((4 + 3) * 5) , (4 + (3 * 5))))
+
