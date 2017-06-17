@@ -243,13 +243,13 @@ void p(struct Expr *e)
 	levels[indent] = 0;
 
 	for (int i = 0; i < indent - 1; i++) {
-		if (levels[i]) printf("|  ");
-		else printf("   ");
+		if (levels[i]) printf("|   ");
+		else printf("    ");
 	}
 
 	if (indent) {
-		if (levels[indent - 1]) printf("|--");
-		else printf("`--");
+		if (levels[indent - 1]) printf("|-- ");
+		else printf("`-- ");
 	}
 
 	switch (e->type) {
