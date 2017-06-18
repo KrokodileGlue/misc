@@ -4,54 +4,53 @@
 
 struct Op {
 	char body;
+	char body2;
 	int prec;
 	enum {
 		LEFT,
 		RIGHT
 	} ass;
 	enum OpType {
+		/* prefix operator types */
 		PREFIX,
+		GROUP, /* only used for grouping with () */
+
+		/* infix operator types */
+		POSTFIX,
 		BINARY,
-		INFIX,
-		POSTFIX
+		MEMBER,
+		TERNARY
 	} type;
 } operators[] = {
-	{ '!', 7, RIGHT, POSTFIX },
-	{ '(', 7, LEFT,  INFIX   },
-	{ '+', 6, RIGHT, PREFIX  },
-	{ '-', 6, RIGHT, PREFIX  },
-	{ '(', 6, LEFT,  PREFIX  },
-	{ '*', 5, LEFT,  BINARY  },
-	{ '/', 5, LEFT,  BINARY  },
-	{ '+', 4, LEFT,  BINARY  },
-	{ '-', 4, LEFT,  BINARY  },
-	{ '?', 3, LEFT,  INFIX   },
-	{ '=', 2, LEFT,  BINARY  },
-	{ ',', 1, RIGHT, BINARY  }
+	{ '(', ')', 7, LEFT,  MEMBER  },
+	{ '[', ']', 7, LEFT,  MEMBER  },
+	{ '+', 'n', 6, RIGHT, PREFIX  },
+	{ '-', 'n', 6, RIGHT, PREFIX  },
+	{ '(', ')', 6, LEFT,  GROUP   },
+	{ '*', 'n', 5, LEFT,  BINARY  },
+	{ '/', 'n', 5, LEFT,  BINARY  },
+	{ '%', 'n', 5, LEFT,  BINARY  },
+	{ '+', 'n', 4, LEFT,  BINARY  },
+	{ '-', 'n', 4, LEFT,  BINARY  },
+	{ '?', ':', 3, LEFT,  TERNARY },
+	{ '=', 'n', 2, LEFT,  BINARY  },
+	{ ',', 'n', 1, RIGHT, BINARY  }
 };
+
+/* a(a,b)=(a*b),pa(2,4) */
+/* i(x)=((x)w(p(x%(2*5)),x=x/(2*5))),s(x)=(a=0,!(x[a]~0)w(p(x[a]),a=a+1),p(2*5)),a=0,(!(a=a+1~(5*5*4+1)))w(a%3~0&a%5~0?s("fizzbuzz"):a%3~0?s("fizz"):a%5~0?s("buzz"):i(a)) */
 
 struct Expr {
 	enum ExprType {
-		EXPR_VALUE,
-		EXPR_PREFIX,
-		EXPR_BINARY,
-		EXPR_POSTFIX,
-		EXPR_TERNARY,
-		EXPR_CALL
+		EXPR_NAME,
+		EXPR_NUM,
+		EXPR_OP
 	} type;
-	char op;
+	struct Op *op;
 	union {
-		struct Expr *unary_operand;
-		struct {
-			struct Expr *left, *right;
-		};
 		char val;
 		struct {
-			struct Expr *condition, *then_branch, *else_branch;
-		};
-		struct {
-			struct Expr *call, **args;
-			size_t len;
+			struct Expr *a, *b, *c;
 		};
 	};
 };
@@ -61,7 +60,8 @@ char *c;
 struct Op *get_infix_op()
 {
 	for (size_t i = 0; i < sizeof operators / sizeof operators[0]; i++) {
-		if (operators[i].body == *c && (operators[i].type == INFIX || operators[i].type == BINARY || operators[i].type == POSTFIX)) {
+		if (operators[i].body == *c
+		    && operators[i].type != PREFIX) {
 			return operators + i;
 		}
 	}
@@ -71,7 +71,9 @@ struct Op *get_infix_op()
 struct Op *get_prefix_op()
 {
 	for (size_t i = 0; i < sizeof operators / sizeof operators[0]; i++) {
-		if (operators[i].body == *c && operators[i].type == PREFIX) {
+		if (operators[i].body == *c
+		    && (operators[i].type == PREFIX
+		    ||  operators[i].type == GROUP)) {
 			return operators + i;
 		}
 	}
@@ -84,96 +86,73 @@ int get_prec(int prec)
 	return prec;
 }
 
-struct Expr *parse_value()
-{
-	struct Expr *e = malloc(sizeof *e);
-	if (isalnum(*c)) {
-		e->type = EXPR_VALUE;
-		e->val = *c;
-		c++;
-	} else {
-		printf("could not parse value of '%c'.\n", *c);
-		exit(EXIT_FAILURE);
-	}
-
-	return e;
-}
-
 struct Expr *parse(int prec)
 {
-	struct Op *prefix_op = get_prefix_op();
-	struct Expr *left = NULL;
+	struct Op *op = get_prefix_op();
+	struct Expr *left = malloc(sizeof *left);
 
-	if (prefix_op) {
-		left = malloc(sizeof *left);
-		left->type = EXPR_PREFIX;
-		left->op = *c;
+	if (op) {
+		left->type = EXPR_OP;
+		left->op = op;
+
 		c++;
-		if (left->op == '(') {
-			left->unary_operand = parse(0);
-			if (*c != ')') {
-				printf("(prefix) expected ')', got '%c'\n", *c);
+		if (op->type == GROUP) {
+			left->a = parse(0);
+			if (*c != op->body2) {
+				printf("(prefix) expected '%c', got '%c'\n",op->body2, *c);
 				exit(EXIT_FAILURE);
 			}
 			c++;
 		} else {
-			left->unary_operand = parse(prefix_op->prec);
+			left->a = parse(op->prec);
 		}
 	} else {
-		left = parse_value();
+		if (isalpha(*c)) {
+			left->type = EXPR_NAME;
+			left->val = *c;
+			c++;
+		} else if (isdigit(*c)) {
+			left->type = EXPR_NUM;
+			left->val = *c - '0';
+			c++;
+		}
 	}
 
-	struct Op *infix_op = NULL;
+	op = NULL;
 	struct Expr *e = left;
 
 	while (prec < get_prec(prec)) {
-		infix_op = get_infix_op();
-		if (!infix_op) return left;
+		op = get_infix_op();
+		if (!op) return left;
 
 		e = malloc(sizeof *e);
+		e->type = EXPR_OP;
+		e->op = op;
+		e->a = left;
 
-		if (*c == '?') {
+		if (op->type == TERNARY) {
 			c++;
-			e->type = EXPR_TERNARY;
-			e->condition = left;
-			e->then_branch = parse(1);
-			if (*c != ':') {
-				printf("expected ':', got '%c'\n", *c);
+			e->b = parse(1);
+			if (*c != op->body2) {
+				printf("expected '%c', got '%c'\n", op->body2, *c);
 				exit(EXIT_FAILURE);
 			}
 			c++;
-			e->else_branch = parse(1);
-		} else if (*c == '(') {
-			e->type = EXPR_CALL;
-			e->op = *c;
-			e->call = left;
-
-			e->args = malloc(sizeof e->args[0]);
-			e->len = 0;
-			if (c[1] != ')') {
-				do {
-					c++;
-					/* call with prec = 1 so that the commas are not recognized as binary operators */
-					e->args[e->len++] = parse(1);
-					e->args = realloc(e->args, (e->len + 1) * sizeof e->args[0]);
-				} while (*c == ',');
-			} else c++;
-
-			if (*c != ')') {
-				printf("(infix) expected ')', got '%c'\n", *c);
+			e->c = parse(1);
+		} else if (op->type == MEMBER) {
+			c++;
+			e->b = parse(0);
+			if (*c != op->body2) {
+				printf("(prefix) expected '%c', got '%c'\n",op->body2, *c);
 				exit(EXIT_FAILURE);
 			}
 			c++;
-		} else if (infix_op->type == BINARY) {
-			e->type = EXPR_BINARY;
-			e->op = *c;
-			e->left = left;
+		} else if (op->type == BINARY) {
 			c++;
-			e->right = parse(infix_op->ass == LEFT ? infix_op->prec : infix_op->prec - 1);
-		} else if (infix_op->type == POSTFIX) {
-			e->type = EXPR_POSTFIX;
-			e->op = *c;
-			e->unary_operand = left;
+			e->b = parse(op->ass == LEFT
+					  ? op->prec
+					  : op->prec - 1);
+		} else if (op->type == POSTFIX) {
 			c++;
 		}
 
@@ -183,126 +162,132 @@ struct Expr *parse(int prec)
 	return e;
 }
 
-void print(struct Expr *e)
+void paren(struct Expr *e)
 {
 	switch (e->type) {
-	case EXPR_PREFIX: {
-		if (e->op == '(') {
-			print(e->unary_operand);
-		} else {
-			printf("(%c", e->op);
-			print(e->unary_operand);
+	case EXPR_NAME: printf("%c", e->val); break;
+	case EXPR_NUM:  printf("%c", e->val + '0'); break;
+	case EXPR_OP: {
+		switch (e->op->type) {
+		case GROUP: {
+			paren(e->a);
+		} break;
+		case PREFIX: {
+			printf("(%c", e->op->body);
+			paren(e->a);
 			printf(")");
+		} break;
+		case BINARY: {
+			printf("(");
+			paren(e->a);
+			printf("%c", e->op->body);
+			paren(e->b);
+			printf(")");
+		} break;
+		case TERNARY: {
+			printf("(");
+			paren(e->a);
+			printf("%c", e->op->body);
+			paren(e->b);
+			printf("%c", e->op->body2);
+			paren(e->c);
+			printf(")");
+		} break;
+		case POSTFIX: {
+			printf("(");
+			paren(e->a);
+			printf("%c)", e->op->body);
+		} break;
+		case MEMBER: {
+			printf("(");
+			paren(e->a);
+			printf("%c", e->op->body);
+			paren(e->b);
+			printf("%c)", e->op->body2);
+		} break;
 		}
 	} break;
-	case EXPR_BINARY: {
-		printf("(");
-		print(e->left);
-		printf(" %c ", e->op);
-		print(e->right);
-		printf(")");
-	} break;
-	case EXPR_VALUE: {
-		printf("%c", e->val);
-	} break;
-	case EXPR_CALL: {
-		printf("(");
-		print(e->call);
-		printf(" with <");
-		for (size_t i = 0; i < e->len; i++) {
-			print(e->args[i]);
-			if (i != e->len - 1) printf(", ");
-		}
-		printf(">)");
-	} break;
-	case EXPR_TERNARY: {
-		printf("(if ");
-		print(e->condition);
-		printf(" then ");
-		print(e->then_branch);
-		printf(" else ");
-		print(e->else_branch);
-		printf(")");
-	} break;
-	case EXPR_POSTFIX: {
-		printf("(");
-		print(e->unary_operand);
-		printf(" %c)", e->op);
-	} break;
-	default: {
-		printf("this should be unreachable.\n");
-	}
 	}
 }
 
-int indent = 0, levels[2048];
+int l = 0, arm[2048];
 
-void p(struct Expr *e)
+void indent()
 {
 	printf("\n\t");
-	levels[indent] = 0;
+	arm[l] = 0;
 
-	for (int i = 0; i < indent - 1; i++) {
-		if (levels[i]) printf("|  ");
-		else printf("   ");
+	for (int i = 0; i < l - 1; i++) {
+		if (arm[i]) printf("|   ");
+		else printf("    ");
 	}
 
-	if (indent) {
-		if (levels[indent - 1]) printf("|--");
-		else printf("`--");
+	if (l) {
+		if (arm[l - 1]) printf("|-- ");
+		else printf("`-- ");
 	}
+}
+
+void split()
+{
+	arm[l - 1] = 1;
+}
+
+void join()
+{
+	arm[l - 1] = 0;
+}
+
+void tree(struct Expr *e)
+{
+	indent();
 
 	switch (e->type) {
-	case EXPR_PREFIX: {
-		if (e->op != '(') printf("(prefix %c)", e->op);
-		else printf("(group)");
-		indent++;
-		p(e->unary_operand);
-		indent--;
-	} break;
-	case EXPR_BINARY: {
-		printf("(binary %c)", e->op);
-		levels[indent] = 1;
-		indent++;
-		p(e->left);
-		levels[indent - 1] = 0;
-		p(e->right);
-		indent--;
-	} break;
-	case EXPR_VALUE: {
-		printf("(value %c)", e->val);
-	} break;
-	case EXPR_CALL: {
-		printf("(function ");
-		print(e->call);
-		printf(")");
-		levels[indent] = 1;
-		indent++;
-		for (size_t i = 0; i < e->len; i++) {
-			if (i == e->len - 1) levels[indent - 1] = 0;
-			p(e->args[i]);
+	case EXPR_NAME: printf("%c", e->val); break;
+	case EXPR_NUM:  printf("%c", e->val + '0'); break;
+	case EXPR_OP: {
+		switch (e->op->type) {
+		case GROUP: {
+			printf("(group)");
+			l++; tree(e->a);
+			l--;
+		} break;
+		case PREFIX: {
+			printf("(prefix %c)", e->op->body);
+			l++;
+			tree(e->a);
+			l--;
+		} break;
+		case BINARY: {
+			printf("(binary %c)", e->op->body);
+			l++;
+			split(); tree(e->a);
+			join();  tree(e->b);
+			l--;
+		} break;
+		case TERNARY: {
+			printf("(ternary %c)", e->op->body);
+			l++;
+			split();
+			tree(e->a);
+			tree(e->b);
+			join();
+			tree(e->c);
+			l--;
+		} break;
+		case POSTFIX: {
+			printf("(");
+			paren(e->a);
+			printf(" %c)", e->op->body);
+		} break;
+		case MEMBER: {
+			printf("(member of "); paren(e->a); printf(")");
+			l++;
+			tree(e->b);
+			l--;
+		} break;
 		}
-		indent--;
 	} break;
-	case EXPR_TERNARY: {
-		printf("(ternary)");
-		levels[indent] = 1;
-		indent++;
-		p(e->condition);
-		p(e->then_branch);
-		levels[indent - 1] = 0;
-		p(e->else_branch);
-		indent--;
-	} break;
-	case EXPR_POSTFIX: {
-		printf("(postfix %c)", e->op);
-		indent++;
-		p(e->unary_operand);
-		indent--;
-	} break;
-	default: {
-		printf("this should be unreachable.\n");
-	}
 	}
 }
 
@@ -311,10 +296,14 @@ int main(int argc, char **argv)
 	printf("expression:\n\t%s\n", argv[1]);
 	c = argv[1];
 	struct Expr *e = parse(0);
+
 	printf("syntax tree:");
-	p(e);
+	tree(e);
+
 	printf("\nparenthesized:\n\t");
-	print(e);
-	printf("\n\n");
+	paren(e);
+
+	printf("\n");
+
 	return 0;
 }
