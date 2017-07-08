@@ -99,7 +99,7 @@ struct Expr *parse(int prec)
 		if (op->type == GROUP) {
 			left->a = parse(0);
 			if (*c != op->body2) {
-				printf("(prefix) expected '%c', got '%c'\n",op->body2, *c);
+				printf("(prefix) expected '%c', got '%c'\n", op->body2, *c);
 				exit(EXIT_FAILURE);
 			}
 			c++;
