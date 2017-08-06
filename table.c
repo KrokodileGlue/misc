@@ -3,23 +3,25 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <string.h>
+#include <stdbool.h>
 
 /*
- * a customized version of the FNV-1a hash function.
+ * The FNV-1a hash function.
  * <http://www.isthe.com/chongo/tech/comp/fnv/index.html> 
  */
 
 #define HASH_INIT ((0x84222325UL << sizeof (uint32_t)) | 0xcbf29ce4UL)
+#define FNV_PRIME ((uint64_t)0x100000001b3)
 
 uint64_t
-hash(const char *buf, size_t len, uint64_t hval)
+hash(const char *buf, size_t len, uint64_t h)
 {
 	for (size_t i = 0; i < len; i++) {
-		hval ^= (uint64_t)buf[i];
-		hval *= (uint64_t)0x100000001b3ULL;
+		h ^= (uint64_t)buf[i];
+		h *= FNV_PRIME;
 	}
 
-	return hval;
+	return h;
 }
 
 uint64_t
@@ -46,6 +48,15 @@ struct value {
 	} d;
 };
 
+uint64_t
+hash_value(const struct value v)
+{
+	switch (v.type) {
+	case VAL_INT: return hash_int(v.d.integer);
+	case VAL_STR: return hash_str(v.d.string);
+	}
+}
+
 void
 print_value(struct value *v)
 {
@@ -60,18 +71,30 @@ print_value(struct value *v)
 	}
 }
 
-#define NUM_TABLE_BUCKETS 32
+bool
+val_cmp(struct value l, struct value r)
+{
+	if (l.type != r.type) return false;
+
+	switch (l.type) {
+	case VAL_INT: return l.d.integer == r.d.integer; break;
+	case VAL_STR: return strcmp(l.d.string, r.d.string) == 0; break;
+	}
+}
+
+#define TABLE_SIZE 32
 
 struct table {
 	struct bucket {
-		uint64_t *key;
+		uint64_t *h;
+		struct value *key;
 		struct value *val;
-		size_t num;
-	} bucket[NUM_TABLE_BUCKETS];
+		size_t len;
+	} bucket[TABLE_SIZE];
 };
 
-struct value *table_lookup(struct table *t, char *key);
-struct value *table_add(struct table *t, char *key, struct value v);
+struct value *table_lookup(struct table *t, struct value key);
+struct value *table_add(struct table *t, struct value key, struct value v);
 struct table *new_table();
 
 struct table *
@@ -82,34 +105,48 @@ new_table()
 	return t;
 }
 
-struct value *
-table_add(struct table *t, char *key, struct value v)
+void
+free_table(struct table *t)
 {
-	uint64_t h = hash_str(key);
-	struct value *o = table_lookup(t, key);
-	if (o) return *o = v, o;
+	for (size_t i = 0; i < TABLE_SIZE; i++) {
+		if (t->bucket[i].h)   free(t->bucket[i].h);
+		if (t->bucket[i].key) free(t->bucket[i].key);
+		if (t->bucket[i].val) free(t->bucket[i].val);
+	}
 
-	int idx = h % NUM_TABLE_BUCKETS;
-	struct bucket *b = t->bucket + idx;
-	b->key  = realloc(b->key,  sizeof b->key[0]  * (b->num + 1));
-	b->val  = realloc(b->val,  sizeof b->val[0]  * (b->num + 1));
-
-	b->key [b->num] = h;
-	b->val [b->num] = v;
-
-	b->num++;
+	free(t);
 }
 
 struct value *
-table_lookup(struct table *t, char *key)
+table_add(struct table *t, struct value key, struct value v)
 {
-	uint64_t h = hash_str(key);
-	int idx = h % NUM_TABLE_BUCKETS;
+	uint64_t h = hash_value(key);
+	struct value *o = table_lookup(t, key);
+	if (o) return *o = v, o;
+
+	int idx = h % TABLE_SIZE;
+	struct bucket *b = t->bucket + idx;
+	b->h   = realloc(b->h,   sizeof b->h[0]   * (b->len + 1));
+	b->val = realloc(b->val, sizeof b->val[0] * (b->len + 1));
+	b->key = realloc(b->key, sizeof b->key[0] * (b->len + 1));
+
+	b->h  [b->len] = h;
+	b->val[b->len] = v;
+	b->key[b->len] = key;
+
+	b->len++;
+}
+
+struct value *
+table_lookup(struct table *t, struct value key)
+{
+	uint64_t h = hash_value(key);
+	int idx = h % TABLE_SIZE;
 
 	struct bucket *b = t->bucket + idx;
 
-	for (int i = 0; i < b->num; i++) {
-		if (b->key[i] == h) {
+	for (int i = 0; i < b->len; i++) {
+		if (b->h[i] == h && val_cmp(b->key[i], key)) {
 			return b->val + i;
 		}
 	}
@@ -117,20 +154,25 @@ table_lookup(struct table *t, char *key)
 	return NULL;
 }
 
+#define STR(x) ((struct value){ VAL_STR, { .string  = x } })
+#define INT(x) ((struct value){ VAL_INT, { .integer  = x } })
+
 int
 main(int argc, char **argv)
 {
 	struct table *t = new_table();
 
-	table_add(t, "foo", (struct value){ VAL_STR, { .string  = "test" } });
-	table_add(t, "bar", (struct value){ VAL_INT, { .integer = 256 } });
-	table_add(t, "baz", (struct value){ VAL_STR, { .string  = "deadbeef" } });
+	table_add(t, STR("foo"),      STR("test"));
+	table_add(t, STR("bar"),      INT(256));
+	table_add(t, STR("baz"),      STR("deadbeef"));
 
-	print_value(table_lookup(t, "foo"));
-	print_value(table_lookup(t, "bar"));
-	print_value(table_lookup(t, "baz"));
+	print_value(table_lookup(t, STR("foo")));
+	print_value(table_lookup(t, STR("bar")));
+	print_value(table_lookup(t, STR("baz")));
 
-	print_value(table_lookup(t, "nonexistent"));
+	print_value(table_lookup(t, STR("whatever")));
+
+	free_table(t);
 
 	return EXIT_SUCCESS;
 }
