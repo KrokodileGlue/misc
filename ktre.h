@@ -12,7 +12,7 @@
 struct ktre {
 	struct instr *c; /* code */
 	size_t ip;       /* instruction pointer */
-	int num_groups;  /* group pointer */
+	int num_groups;
 };
 
 enum {
@@ -35,9 +35,9 @@ struct instr {
 
 	union {
 		struct {
-			uint16_t a, b;
+			int a, b;
 		};
-		char c;
+		int c;
 	};
 };
 
@@ -84,8 +84,12 @@ struct node {
 		NODE_NONE
 	} type;
 
-	struct node *a, *b;
-	int c;
+	union {
+		struct {
+			struct node *a, *b;
+		};
+		int c;
+	};
 };
 
 static struct node *parse(const char **pat);
@@ -321,8 +325,11 @@ compile(struct ktre *re, struct node *n)
 	} break;
 	case NODE_GROUP: {
 		emit_c(re, INSTR_SAVE, re->num_groups * 2);
+		int old = re->num_groups;
+		re->num_groups++;
 		compile(re, n->a);
-		emit_c(re, INSTR_SAVE, re->num_groups * 2 + 1);
+		re->num_groups--;
+		emit_c(re, INSTR_SAVE, old * 2 + 1);
 		re->num_groups++;
 	} break;
 	case NODE_ANY:
@@ -420,6 +427,7 @@ run(const struct ktre *re, const char *subject, int ip, int sp, int *vec, int ve
 bool
 ktre_exec(const struct ktre *re, int opt, const char *subject, int *vec, int vec_len)
 {
+	memset(vec, 0, sizeof vec[0] * vec_len);
 	return run(re, subject, 0, 0, vec, vec_len);
 }
 #endif /* ifdef KTRE_IMPLEMENTATION */
