@@ -17,7 +17,7 @@ int main(int argc, char *argv[])
 		printf("matched!\n");
 
 		for (int i = 0; i < re->num_groups; i += 2) {
-			printf("group %d: %.*s\n", i, vec[i + 1], &subject[vec[i]]);
+			printf("group %d: %.*s\n", i / 2, vec[i + 1], &subject[vec[i]]);
 		}
 	} else {
 		printf("did not match!\n");
