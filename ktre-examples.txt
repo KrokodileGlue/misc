@@ -1,11 +1,19 @@
-matching string 'foooooooo______br' against regex '(fo*)(.*)(ba?r)'
+matching string 'foobarbarba___bazbaz' against regex 'foo(bar)*(.*)(ba?z)'
 (sequence)
 |-- (sequence)
-|   |-- (group)
-|   |   `-- (sequence)
-|   |       |-- (char 'f')
-|   |       `-- (asterisk)
-|   |           `-- (char 'o')
+|   |-- (sequence)
+|   |   |-- (sequence)
+|   |   |   |-- (sequence)
+|   |   |   |   |-- (char 'f')
+|   |   |   |   `-- (char 'o')
+|   |   |   `-- (char 'o')
+|   |   `-- (asterisk)
+|   |       `-- (group)
+|   |           `-- (sequence)
+|   |               |-- (sequence)
+|   |               |   |-- (char 'b')
+|   |               |   `-- (char 'a')
+|   |               `-- (char 'r')
 |   `-- (group)
 |       `-- (asterisk)
 |           `-- (any)
@@ -15,26 +23,30 @@ matching string 'foooooooo______br' against regex '(fo*)(.*)(ba?r)'
         |   |-- (char 'b')
         |   `-- (question)
         |       `-- (char 'a')
-        `-- (char 'r')
-  0: SAVE    0
-  1: CHAR   'f'
-  2: SPLIT   3,   5
-  3: CHAR   'o'
-  4: SPLIT   3,   5
-  5: SAVE    1
-  6: SAVE    2
-  7: SPLIT   8,  10
-  8: ANY
-  9: SPLIT   8,  10
- 10: SAVE    3
- 11: SAVE    4
- 12: CHAR   'b'
- 13: SPLIT  14,  15
- 14: CHAR   'a'
- 15: CHAR   'r'
- 16: SAVE    5
- 17: MATCH
+        `-- (char 'z')
+  0: CHAR   'f'
+  1: CHAR   'o'
+  2: CHAR   'o'
+  3: SPLIT   4,  10
+  4: SAVE    0
+  5: CHAR   'b'
+  6: CHAR   'a'
+  7: CHAR   'r'
+  8: SAVE    1
+  9: SPLIT   4,  10
+ 10: SAVE    2
+ 11: SPLIT  12,  14
+ 12: ANY
+ 13: SPLIT  12,  14
+ 14: SAVE    3
+ 15: SAVE    4
+ 16: CHAR   'b'
+ 17: SPLIT  18,  19
+ 18: CHAR   'a'
+ 19: CHAR   'z'
+ 20: SAVE    5
+ 21: MATCH
 matched!
-group 0: foooooooo
-group 1: ______
-group 2: br
+group 0: bar
+group 1: ba___baz
+group 2: baz
