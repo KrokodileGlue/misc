@@ -296,6 +296,9 @@ print_node(struct node *n)
 }
 #endif
 
+#define patch_a(_re, _a, _c)	  \
+	_re->c[_a].a = _c;
+
 #define patch_b(_re, _a, _c)	  \
 	_re->c[_a].b = _c;
 
@@ -307,9 +310,11 @@ compile(struct ktre *re, struct node *n)
 		compile(re, n->a);
 		compile(re, n->b);
 		break;
+
 	case NODE_CHAR:
 		emit_c(re, INSTR_CHAR, n->c);
 		break;
+
 	case NODE_ASTERISK: {
 		int a = re->ip;
 		emit_ab(re, INSTR_SPLIT, re->ip + 1, -1);
@@ -317,12 +322,37 @@ compile(struct ktre *re, struct node *n)
 		emit_ab(re, INSTR_SPLIT, a + 1, re->ip + 1);
 		patch_b(re, a, re->ip);
 	} break;
+
 	case NODE_QUESTION: {
-		int a = re->ip;
-		emit_ab(re, INSTR_SPLIT, re->ip + 1, -1);
-		compile(re, n->a);
-		patch_b(re, a, re->ip);
+		int a;
+
+		switch (n->a->type) {
+		case NODE_ASTERISK:
+			a = re->ip;
+			emit_ab(re, INSTR_SPLIT, -1, re->ip + 1);
+			compile(re, n->a->a);
+			emit_ab(re, INSTR_SPLIT, re->ip + 1, a + 1);
+			patch_a(re, a, re->ip);
+			break;
+		case NODE_PLUS:
+			a = re->ip;
+			compile(re, n->a->a);
+			emit_ab(re, INSTR_SPLIT, re->ip + 1, a);
+			break;
+		case NODE_QUESTION:
+			a = re->ip;
+			emit_ab(re, INSTR_SPLIT, -1, re->ip + 1);
+			compile(re, n->a->a);
+			patch_a(re, a, re->ip);
+			break;
+		default:
+			a = re->ip;
+			emit_ab(re, INSTR_SPLIT, re->ip + 1, -1);
+			compile(re, n->a);
+			patch_b(re, a, re->ip);
+		}
 	} break;
+
 	case NODE_GROUP: {
 		emit_c(re, INSTR_SAVE, re->num_groups * 2);
 		int old = re->num_groups;
@@ -332,14 +362,17 @@ compile(struct ktre *re, struct node *n)
 		emit_c(re, INSTR_SAVE, old * 2 + 1);
 		re->num_groups++;
 	} break;
+
 	case NODE_ANY:
 		emit(re, INSTR_ANY);
 		break;
+
 	case NODE_PLUS: {
 		int a = re->ip;
 		compile(re, n->a);
 		emit_ab(re, INSTR_SPLIT, a, re->ip + 1);
 	} break;
+
 	default:
 		assert(false);
 	}
@@ -399,7 +432,7 @@ run(const struct ktre *re, const char *subject, int ip, int sp, int *vec, int ve
 
 		return run(re, subject, re->c[ip].b, sp, vec, vec_len);
 	case INSTR_MATCH:
-		return true;
+		return subject[sp] == 0;
 	case INSTR_SAVE: {
 		int old = vec[re->c[ip].c];
 
