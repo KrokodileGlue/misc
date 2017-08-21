@@ -1,0 +1,40 @@
+matching string 'foooooooo______br' against regex '(fo*)(.*)(ba?r)'
+(sequence)
+|-- (sequence)
+|   |-- (group)
+|   |   `-- (sequence)
+|   |       |-- (char 'f')
+|   |       `-- (asterisk)
+|   |           `-- (char 'o')
+|   `-- (group)
+|       `-- (asterisk)
+|           `-- (any)
+`-- (group)
+    `-- (sequence)
+        |-- (sequence)
+        |   |-- (char 'b')
+        |   `-- (question)
+        |       `-- (char 'a')
+        `-- (char 'r')
+  0: SAVE    0
+  1: CHAR   'f'
+  2: SPLIT   3,   5
+  3: CHAR   'o'
+  4: SPLIT   3,   5
+  5: SAVE    1
+  6: SAVE    2
+  7: SPLIT   8,  10
+  8: ANY
+  9: SPLIT   8,  10
+ 10: SAVE    3
+ 11: SAVE    4
+ 12: CHAR   'b'
+ 13: SPLIT  14,  15
+ 14: CHAR   'a'
+ 15: CHAR   'r'
+ 16: SAVE    5
+ 17: MATCH
+matched!
+group 0: foooooooo
+group 1: ______
+group 2: br
