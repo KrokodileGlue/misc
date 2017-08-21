@@ -310,7 +310,7 @@ compile(struct ktre *re, struct node *n)
 		int a = re->ip;
 		emit_ab(re, INSTR_SPLIT, re->ip + 1, -1);
 		compile(re, n->a);
-		emit_ab(re, INSTR_SPLIT, re->ip - 1, re->ip + 1);
+		emit_ab(re, INSTR_SPLIT, a + 1, re->ip + 1);
 		patch_b(re, a, re->ip);
 	} break;
 	case NODE_QUESTION: {
@@ -320,13 +320,19 @@ compile(struct ktre *re, struct node *n)
 		patch_b(re, a, re->ip);
 	} break;
 	case NODE_GROUP: {
-		emit_c(re, INSTR_SAVE, re->num_groups++);
+		emit_c(re, INSTR_SAVE, re->num_groups * 2);
 		compile(re, n->a);
-		emit_c(re, INSTR_SAVE, re->num_groups++);
+		emit_c(re, INSTR_SAVE, re->num_groups * 2 + 1);
+		re->num_groups++;
 	} break;
 	case NODE_ANY:
 		emit(re, INSTR_ANY);
 		break;
+	case NODE_PLUS: {
+		int a = re->ip;
+		compile(re, n->a);
+		emit_ab(re, INSTR_SPLIT, a, re->ip + 1);
+	} break;
 	default:
 		assert(false);
 	}
