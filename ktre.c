@@ -18,7 +18,9 @@ int main(int argc, char *argv[])
 	int *vec = NULL;
 	struct ktre *re = ktre_compile(regex, 0);
 
-	if (ktre_exec(re, subject, &vec)) {
+	if (re->err) {
+		printf("\nregex failed to compile with error code %d: %s\n", re->err, re->err_str);
+	} else if (ktre_exec(re, subject, &vec)) {
 		printf("\nmatched!");
 
 		for (int i = 0; i < re->num_groups; i++)

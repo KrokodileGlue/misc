@@ -1,10 +1,25 @@
 #ifndef KTRE_H
 #define KTRE_H
 
+enum ktre_error {
+	KTRE_ERROR_NO_ERROR,
+	KTRE_ERROR_UNMATCHED_PAREN
+};
+
 struct ktre {
 	struct instr *c; /* code */
 	int ip;          /* instruction pointer */
 	int num_groups, opt;
+	/* string containing an error message in the case
+	 * of failure during parsing or compilation */
+	char *err_str;
+	enum ktre_error err; /* an error status code */
+
+	/* implementation details */
+	char const *pat;
+	char const *sp; /* pointer to the character currently being parsed */
+	struct node *n;
+	_Bool failed;
 };
 
 enum {
@@ -133,64 +148,68 @@ struct node {
 	};
 };
 
-static struct node *parse(const char **pat);
-
-#define NEXT                         \
-	do {                         \
-		if (**pat) (*pat)++; \
+#define NEXT                             \
+	do {                             \
+		if (*re->sp) re->sp++; \
 	} while (0)
 
-#define EXPECT(x)                                                         \
-	do {                                                              \
-		if (**pat != x) {                                         \
-			fprintf(stderr, "\nunexpected token '%c'; expected '%c' \n", **pat, x); \
-			return NULL;                                      \
-		}                                                         \
-		NEXT;                                                     \
-	} while (0)
+#define MAX_ERROR_LEN 256 /* some arbitrary limit */
+
+#include <stdarg.h>
+static void
+error(struct ktre *re, enum ktre_error err, char *fmt, ...)
+{
+	re->failed = true;
+	re->err = err;
+	re->err_str = _malloc(MAX_ERROR_LEN);
+
+	va_list args;
+	va_start(args, fmt);
+	vsnprintf(re->err_str, MAX_ERROR_LEN, fmt, args);
+	va_end(args);
+}
+
+static struct node *parse(struct ktre *re);
 
 static struct node *
-base(const char **pat)
+factor(struct ktre *re)
 {
-	struct node *n = _malloc(sizeof *n);
+	struct node *left = _malloc(sizeof *left);
 
-	switch (**pat) {
+	/* parse a primary */
+	switch (*re->sp) {
 	case '\\':
 		NEXT;
-		n->type = NODE_CHAR;
-		n->c = **pat;
+		left->type = NODE_CHAR;
+		left->c = *re->sp;
 		break;
 	case '(':
 		NEXT;
-		n->type = NODE_GROUP;
-		n->a = parse(pat);
-		EXPECT(')');
+		left->type = NODE_GROUP;
+		left->a = parse(re);
+		if (*re->sp != ')') {
+			error(re, KTRE_ERROR_UNMATCHED_PAREN, "unmatched '(' at character %d in regex", re->sp - re->pat);
+			return left;
+		}
+		NEXT;
 		break;
 	case '.':
 		NEXT;
-		n->type = NODE_ANY;
+		left->type = NODE_ANY;
 		break;
 	default:
-		n->type = NODE_CHAR;
-		n->c = **pat;
+		left->type = NODE_CHAR;
+		left->c = *re->sp;
 		NEXT;
 	}
 
-	return n;
-}
-
-static struct node *
-factor(const char **pat)
-{
-	struct node *left = base(pat);
-
-	while (**pat && (**pat == '*' || **pat == '+' || **pat == '?')) {
+	while (*re->sp && (*re->sp == '*' || *re->sp == '+' || *re->sp == '?')) {
 		NEXT;
 		struct node *n = _malloc(sizeof *n);
 
-		if ((*pat)[-1] == '*')
+		if (re->sp[-1] == '*')
 			n->type = NODE_ASTERISK;
-		else if ((*pat)[-1] == '?')
+		else if (re->sp[-1] == '?')
 			n->type = NODE_QUESTION;
 		else
 			n->type = NODE_PLUS;
@@ -203,13 +222,13 @@ factor(const char **pat)
 }
 
 static struct node *
-term(const char **pat)
+term(struct ktre *re)
 {
 	struct node *left = _malloc(sizeof *left);
 	left->type = NODE_NONE;
 
-	while (**pat && **pat != '|' && **pat != ')') {
-		struct node *right = factor(pat);
+	while (*re->sp && *re->sp != '|' && *re->sp != ')') {
+		struct node *right = factor(re);
 
 		if (left->type == NODE_NONE) {
 			free(left);
@@ -227,17 +246,17 @@ term(const char **pat)
 }
 
 static struct node *
-parse(const char **pat)
+parse(struct ktre *re)
 {
-	struct node *n = term(pat);
+	struct node *n = term(re);
 
-	if (**pat && **pat == '|') {
+	if (*re->sp && *re->sp == '|') {
 		NEXT;
 
 		struct node *m = _malloc(sizeof *m);
 		m->type = NODE_OR;
 		m->a = n;
-		m->b = parse(pat);
+		m->b = parse(re);
 		return m;
 	}
 
@@ -405,18 +424,23 @@ compile(struct ktre *re, struct node *n)
 struct ktre *
 ktre_compile(const char *pat, int opt)
 {
-	struct ktre *re = _malloc(sizeof *re);
-	re->c = NULL, re->ip = 0, re->opt = opt, re->num_groups = 0;
+	struct ktre *re = _calloc(sizeof *re);
+	re->pat = pat, re->opt = opt, re->sp = pat;
 
-	/* parse */
-	struct node *n = parse(&pat);
+	re->n = parse(re);
+	if (re->failed) {
+		free_node(re->n);
+		return re;
+	}
 
-	/* compile */
-	compile(re, n);
+	compile(re, re->n);
+	if (re->failed)
+		return re;
+
 	emit(re, INSTR_MATCH);
 
 #ifdef KTRE_DEBUG
-	print_node(n);
+	print_node(re->n);
 
 	for (int i = 0; i < re->ip; i++) {
 		DBG("\n%3d: ", i);
@@ -431,7 +455,7 @@ ktre_compile(const char *pat, int opt)
 		}
 	}
 #endif
-	free_node(n);
+	free_node(re->n);
 
 	return re;
 }
@@ -489,6 +513,7 @@ void
 ktre_free(struct ktre *re)
 {
 	free(re->c);
+	if (re->err_str) free(re->err_str);
 	free(re);
 }
 
