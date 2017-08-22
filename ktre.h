@@ -92,6 +92,7 @@ struct instr {
 		INSTR_JP,
 		INSTR_SPLIT,
 		INSTR_ANY,
+		INSTR_CLASS,
 		INSTR_SAVE
 	} op;
 
@@ -100,6 +101,7 @@ struct instr {
 			int a, b;
 		};
 		int c;
+		char *class;
 	};
 };
 
@@ -126,6 +128,16 @@ emit_c(struct ktre *re, int instr, int c)
 }
 
 static void
+emit_class(struct ktre *re, int instr, char *class)
+{
+	re->c = _realloc(re->c, sizeof re->c[0] * (re->ip + 1));
+	re->c[re->ip].op = instr;
+	re->c[re->ip].class = class;
+
+	re->ip++;
+}
+
+static void
 emit(struct ktre *re, int instr)
 {
 	re->c = _realloc(re->c, sizeof re->c[0] * (re->ip + 1));
@@ -143,6 +155,7 @@ struct node {
 		NODE_GROUP,
 		NODE_QUESTION,
 		NODE_ANY,
+		NODE_CLASS,
 		NODE_NONE
 	} type;
 
@@ -151,6 +164,7 @@ struct node {
 			struct node *a, *b;
 		};
 		int c;
+		char *class;
 	};
 };
 
@@ -178,6 +192,16 @@ error(struct ktre *re, enum ktre_error err, int loc, char *fmt, ...)
 
 static struct node *parse(struct ktre *re);
 
+static char *
+append_to_str(char *class, char c)
+{
+	size_t len = class ? strlen(class) : 0;
+	class = _realloc(class, len + 2);
+	class[len] = c;
+	class[len + 1] = 0;
+	return class;
+}
+
 static struct node *
 factor(struct ktre *re)
 {
@@ -185,10 +209,28 @@ factor(struct ktre *re)
 
 	/* parse a primary */
 	switch (*re->sp) {
-	case '\\':
+	case '\\': /* escape sequences */
 		NEXT;
 		left->type = NODE_CHAR;
 		left->c = *re->sp;
+		break;
+	case '[': /* character classes */
+		NEXT;
+		left->type = NODE_CLASS;
+		char *class = NULL;
+		while (*re->sp && *re->sp != ']') {
+			if (re->sp[1] == '-' && re->sp[2] != ']') {
+				for (int i = re->sp[0]; i < re->sp[2]; i++) {
+					class = append_to_str(class, i);
+				}
+				re->sp += 3;
+			} else {
+				class = append_to_str(class, *re->sp);
+				re->sp++;
+			}
+		}
+		left->class = class;
+		NEXT;
 		break;
 	case '(':
 		NEXT;
@@ -341,6 +383,7 @@ print_node(struct node *n)
 	case NODE_ANY:      DBG("(any)");             break;
 	case NODE_NONE:     DBG("(none)");            break;
 	case NODE_CHAR:     DBG("(char '%c')", n->c); break;
+	case NODE_CLASS:    DBG("(class '%s')", n->class); break;
 	default:
 		DBG("unimplemented printer for node of type %d\n", n->type);
 		assert(false);
@@ -354,6 +397,7 @@ compile(struct ktre *re, struct node *n)
 {
 #define patch_a(_re, _a, _c) _re->c[_a].a = _c;
 #define patch_b(_re, _a, _c) _re->c[_a].b = _c;
+#define patch_c(_re, _a, _c) _re->c[_a].c = _c;
 
 	switch (n->type) {
 	case NODE_SEQUENCE:
@@ -423,6 +467,21 @@ compile(struct ktre *re, struct node *n)
 		emit_ab(re, INSTR_SPLIT, a, re->ip + 1);
 	} break;
 
+	case NODE_OR: {
+		int a = re->ip;
+		emit_ab(re, INSTR_SPLIT, re->ip + 1, -1);
+		compile(re, n->a);
+		int b = re->ip;
+		emit_c(re, INSTR_JP, -1);
+		patch_b(re, a, re->ip);
+		compile(re, n->b);
+		patch_c(re, b, re->ip);
+	} break;
+
+	case NODE_CLASS:
+		emit_class(re, INSTR_CLASS, n->class);
+		break;
+
 	default:
 #ifdef KTRE_DEBUG
 		DBG("unimplemented compiler for node of type %d\n", n->type);
@@ -463,6 +522,8 @@ ktre_compile(const char *pat, int opt)
 		case INSTR_ANY:   DBG("ANY"); break;
 		case INSTR_MATCH: DBG("MATCH"); break;
 		case INSTR_SAVE:  DBG("SAVE  %3d", re->c[i].c); break;
+		case INSTR_JP:    DBG("JP    %3d", re->c[i].c); break;
+		case INSTR_CLASS: DBG("CLASS '%s'", re->c[i].class); break;
 		default: assert(false);
 		}
 	}
@@ -472,8 +533,7 @@ ktre_compile(const char *pat, int opt)
 	return re;
 }
 
-#define MAX_THREAD (1 << 15) /* 32768 should be enough */
-//#define MAX_THREAD 1000
+#define MAX_THREAD (1 << 11) /* 2048 should be enough */
 static bool
 run(struct ktre *re, const char *subject, int *vec)
 {
@@ -482,7 +542,6 @@ run(struct ktre *re, const char *subject, int *vec)
 		int old, old_idx;
 	} t[MAX_THREAD];
 	int tp = 0; /* toilet paper */
-	bool ret = false;
 
 #define new_thread(_ip, _sp) \
 	t[++tp] = (struct thread){ _ip, _sp, -1, -1 }
@@ -505,6 +564,10 @@ run(struct ktre *re, const char *subject, int *vec)
 		}
 
 		switch (re->c[ip].op) {
+		case INSTR_CLASS:
+			tp--;
+			if (strchr(re->c[ip].class, subject[sp])) new_thread(ip + 1, sp + 1);
+			break;
 		case INSTR_CHAR:
 			tp--;
 			if (subject[sp] == re->c[ip].c) new_thread(ip + 1, sp + 1);
@@ -536,16 +599,19 @@ run(struct ktre *re, const char *subject, int *vec)
 				tp--;
 			}
 			break;
+		case INSTR_JP:
+			t[tp].ip = re->c[ip].c;
+			break;
 		default:
 #ifdef KTRE_DEBUG
-			DBG("unimplemented instruction %d\n", re->c[ip].c);
+			DBG("\nunimplemented instruction %d\n", re->c[ip].op);
 			assert(false);
 #endif
 			return false;
 		}
 	}
 
-	return ret;
+	return false;
 }
 
 void
