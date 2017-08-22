@@ -20,12 +20,28 @@ void ktre_free(struct ktre *re);
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef KTRE_DEBUG
 #include <assert.h>
+#endif
 
 static void *
 _malloc(size_t n)
 {
 	void *a = malloc(n);
+
+	if (!a) {
+		fprintf(stderr, "ktre: out of memory\n");
+		exit(EXIT_FAILURE);
+	}
+
+	return a;
+}
+
+static void *
+_calloc(size_t n)
+{
+	void *a = calloc(n, 1);
 
 	if (!a) {
 		fprintf(stderr, "ktre: out of memory\n");
@@ -119,12 +135,19 @@ struct node {
 
 static struct node *parse(const char **pat);
 
-#define EXPECT(x)	  \
-	do { \
-		if (**pat != x) { \
-			fprintf(stderr, "unexpected token %c; expected %c\n", **pat, x); \
-		} \
-	} while (false)
+#define NEXT                         \
+	do {                         \
+		if (**pat) (*pat)++; \
+	} while (0)
+
+#define EXPECT(x)                                                         \
+	do {                                                              \
+		if (**pat != x) {                                         \
+			fprintf(stderr, "\nunexpected token '%c'; expected '%c' \n", **pat, x); \
+			return NULL;                                      \
+		}                                                         \
+		NEXT;                                                     \
+	} while (0)
 
 static struct node *
 base(const char **pat)
@@ -133,24 +156,24 @@ base(const char **pat)
 
 	switch (**pat) {
 	case '\\':
-		(*pat)++;
+		NEXT;
 		n->type = NODE_CHAR;
 		n->c = **pat;
 		break;
 	case '(':
-		(*pat)++;
+		NEXT;
 		n->type = NODE_GROUP;
 		n->a = parse(pat);
-		(*pat)++;
+		EXPECT(')');
 		break;
 	case '.':
-		(*pat)++;
+		NEXT;
 		n->type = NODE_ANY;
 		break;
 	default:
 		n->type = NODE_CHAR;
 		n->c = **pat;
-		(*pat)++;
+		NEXT;
 	}
 
 	return n;
@@ -162,7 +185,7 @@ factor(const char **pat)
 	struct node *left = base(pat);
 
 	while (**pat && (**pat == '*' || **pat == '+' || **pat == '?')) {
-		(*pat)++;
+		NEXT;
 		struct node *n = _malloc(sizeof *n);
 
 		if ((*pat)[-1] == '*')
@@ -209,7 +232,7 @@ parse(const char **pat)
 	struct node *n = term(pat);
 
 	if (**pat && **pat == '|') {
-		(*pat)++;
+		NEXT;
 
 		struct node *m = _malloc(sizeof *m);
 		m->type = NODE_OR;
@@ -247,7 +270,7 @@ print_node(struct node *n)
 {
 #define join arm[l - 1] = 0
 #define split arm[l - 1] = 1
-	static int l = 0, arm[2048];
+	static int l = 0, arm[2048] = { 0 };
 	DBG("\n");
 	arm[l] = 0;
 
@@ -371,7 +394,11 @@ compile(struct ktre *re, struct node *n)
 	} break;
 
 	default:
+#ifdef KTRE_DEBUG
+		DBG("unimplemented compiler for node of type %d\n", n->type);
 		assert(false);
+#endif
+		break;
 	}
 }
 
@@ -389,7 +416,7 @@ ktre_compile(const char *pat, int opt)
 	emit(re, INSTR_MATCH);
 
 #ifdef KTRE_DEBUG
-	print_node(n); DBG("\n");
+	print_node(n);
 
 	for (int i = 0; i < re->ip; i++) {
 		DBG("\n%3d: ", i);
@@ -449,6 +476,7 @@ run(const struct ktre *re, const char *subject, int ip, int sp, int *vec, int ve
 	default:
 #ifdef KTRE_DEBUG
 		DBG("unimplemented instruction %d\n", re->c[ip].c);
+		assert(false);
 #endif
 		return false;
 	}
@@ -467,8 +495,7 @@ ktre_free(struct ktre *re)
 _Bool
 ktre_exec(const struct ktre *re, const char *subject, int **vec)
 {
-	*vec = _malloc(sizeof (*vec[0]) * re->num_groups * 2);
-	memset(*vec, 0, sizeof (*vec[0]) * re->num_groups * 2);
+	*vec = _calloc(sizeof (*vec[0]) * re->num_groups * 2);
 
 	if (run(re, subject, 0, 0, *vec, re->num_groups * 2)) {
 		return true;

@@ -27,7 +27,7 @@ int main(int argc, char *argv[])
 		putchar('\n');
 		free(vec);
 	} else {
-		printf("\ndid not match!");
+		printf("\ndid not match!\n");
 	}
 
 	ktre_free(re);
