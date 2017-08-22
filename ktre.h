@@ -1,9 +1,6 @@
 #ifndef KTRE_H
 #define KTRE_H
 
-
-#define KTRE_DEBUG
-
 struct ktre {
 	struct instr *c; /* code */
 	int ip;          /* instruction pointer */
@@ -11,7 +8,8 @@ struct ktre {
 };
 
 enum {
-	KTRE_INSENSITIVE = 1
+	KTRE_INSENSITIVE = 1,
+	KTRE_UNANCHORED
 };
 
 struct ktre *ktre_compile(const char *pat, int opt);
@@ -264,6 +262,7 @@ print_node(struct node *n)
 	}
 
 #define pnode(x) l++; print_node(x); l--
+#define N(...) DBG(__VA_ARGS__); pnode(n->a)
 
 	switch (n->type) {
 	case NODE_SEQUENCE:
@@ -282,29 +281,27 @@ print_node(struct node *n)
 		print_node(n->b);
 		l--;
 		break;
-	case NODE_ASTERISK: DBG("(asterisk)"); pnode(n->a); break;
-	case NODE_PLUS: DBG("(plus)"); pnode(n->a); break;
-	case NODE_GROUP: DBG("(group)"); pnode(n->a); break;
-	case NODE_QUESTION: DBG("(question)"); pnode(n->a); break;
-	case NODE_ANY: DBG("(any)"); break;
-	case NODE_NONE: DBG("(none)"); break;
-	case NODE_CHAR: DBG("(char '%c')", n->c); break;
+	case NODE_ASTERISK: N("(asterisk)");          break;
+	case NODE_PLUS:     N("(plus)");              break;
+	case NODE_GROUP:    N("(group)");             break;
+	case NODE_QUESTION: N("(question)");          break;
+	case NODE_ANY:      DBG("(any)");             break;
+	case NODE_NONE:     DBG("(none)");            break;
+	case NODE_CHAR:     DBG("(char '%c')", n->c); break;
 	default:
 		DBG("unimplemented printer for node of type %d\n", n->type);
 		assert(false);
 	}
+#undef N
 }
 #endif
-
-#define patch_a(_re, _a, _c)	  \
-	_re->c[_a].a = _c;
-
-#define patch_b(_re, _a, _c)	  \
-	_re->c[_a].b = _c;
 
 static void
 compile(struct ktre *re, struct node *n)
 {
+#define patch_a(_re, _a, _c) _re->c[_a].a = _c;
+#define patch_b(_re, _a, _c) _re->c[_a].b = _c;
+
 	switch (n->type) {
 	case NODE_SEQUENCE:
 		compile(re, n->a);
@@ -395,14 +392,14 @@ ktre_compile(const char *pat, int opt)
 	print_node(n); DBG("\n");
 
 	for (int i = 0; i < re->ip; i++) {
-		DBG("%3d: ", i);
+		DBG("\n%3d: ", i);
 
 		switch (re->c[i].op) {
-		case INSTR_CHAR:  DBG("CHAR   '%c'\n", re->c[i].c); break;
-		case INSTR_SPLIT: DBG("SPLIT %3d, %3d\n", re->c[i].a, re->c[i].b); break;
-		case INSTR_ANY:   DBG("ANY\n"); break;
-		case INSTR_MATCH: DBG("MATCH\n"); break;
-		case INSTR_SAVE:  DBG("SAVE  %3d\n", re->c[i].c); break;
+		case INSTR_CHAR:  DBG("CHAR   '%c'", re->c[i].c); break;
+		case INSTR_SPLIT: DBG("SPLIT %3d, %3d", re->c[i].a, re->c[i].b); break;
+		case INSTR_ANY:   DBG("ANY"); break;
+		case INSTR_MATCH: DBG("MATCH"); break;
+		case INSTR_SAVE:  DBG("SAVE  %3d", re->c[i].c); break;
 		default: assert(false);
 		}
 	}
