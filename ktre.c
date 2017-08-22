@@ -8,7 +8,7 @@
 int main(int argc, char *argv[])
 {
 	if (argc < 3) {
-		fprintf(stderr, "Usage: ktre subject pattern\n");
+		fprintf(stderr, "Usage: ktre [subject] [pattern]\n");
 		exit(EXIT_FAILURE);
 	}
 
