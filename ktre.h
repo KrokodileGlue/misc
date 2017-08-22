@@ -3,32 +3,38 @@
 
 enum ktre_error {
 	KTRE_ERROR_NO_ERROR,
-	KTRE_ERROR_UNMATCHED_PAREN
+	KTRE_ERROR_UNMATCHED_PAREN,
+	KTRE_ERROR_STACK_OVERFLOW,
+	KTRE_ERROR_INTERNAL_ERROR
 };
 
 struct ktre {
-	struct instr *c; /* code */
-	int ip;          /* instruction pointer */
+	/* public fields */
 	int num_groups, opt;
 	/* string containing an error message in the case
 	 * of failure during parsing or compilation */
 	char *err_str;
-	enum ktre_error err; /* an error status code */
+	enum ktre_error err; /* error status code */
+	_Bool failed;
+	/* the location of any error that occurred, as an index
+	 * in the last subject the regex was run on */
+	int loc;
 
 	/* implementation details */
+	struct instr *c; /* code */
+	int ip;          /* instruction pointer */
 	char const *pat;
-	char const *sp; /* pointer to the character currently being parsed */
+	char const *sp;  /* pointer to the character currently being parsed */
 	struct node *n;
-	_Bool failed;
 };
 
 enum {
-	KTRE_INSENSITIVE = 1,
-	KTRE_UNANCHORED
+	KTRE_INSENSITIVE = 1 << 0,
+	KTRE_UNANCHORED  = 1 << 1,
 };
 
 struct ktre *ktre_compile(const char *pat, int opt);
-_Bool ktre_exec(const struct ktre *re, const char *subject, int **vec);
+_Bool ktre_exec(struct ktre *re, const char *subject, int **vec);
 void ktre_free(struct ktre *re);
 
 #ifdef KTRE_IMPLEMENTATION
@@ -157,11 +163,12 @@ struct node {
 
 #include <stdarg.h>
 static void
-error(struct ktre *re, enum ktre_error err, char *fmt, ...)
+error(struct ktre *re, enum ktre_error err, int loc, char *fmt, ...)
 {
 	re->failed = true;
 	re->err = err;
 	re->err_str = _malloc(MAX_ERROR_LEN);
+	re->loc = loc;
 
 	va_list args;
 	va_start(args, fmt);
@@ -187,10 +194,14 @@ factor(struct ktre *re)
 		NEXT;
 		left->type = NODE_GROUP;
 		left->a = parse(re);
+
 		if (*re->sp != ')') {
-			error(re, KTRE_ERROR_UNMATCHED_PAREN, "unmatched '(' at character %d in regex", re->sp - re->pat);
+			error(re, KTRE_ERROR_UNMATCHED_PAREN, re->sp - re->pat, "unmatched '(' at character %d", re->sp - re->pat);
+			free(left->a);
+			left->type = NODE_NONE;
 			return left;
 		}
+
 		NEXT;
 		break;
 	case '.':
@@ -426,6 +437,7 @@ ktre_compile(const char *pat, int opt)
 {
 	struct ktre *re = _calloc(sizeof *re);
 	re->pat = pat, re->opt = opt, re->sp = pat;
+	re->err_str = "no error";
 
 	re->n = parse(re);
 	if (re->failed) {
@@ -460,69 +472,96 @@ ktre_compile(const char *pat, int opt)
 	return re;
 }
 
+#define MAX_THREAD (1 << 15) /* 32768 should be enough */
+//#define MAX_THREAD 1000
 static bool
-run(const struct ktre *re, const char *subject, int ip, int sp, int *vec, int vec_len)
+run(struct ktre *re, const char *subject, int *vec)
 {
-	switch (re->c[ip].op) {
-	case INSTR_CHAR:
-		if (subject[sp] != re->c[ip].c)
+	struct thread {
+		int ip, sp;
+		int old, old_idx;
+	} t[MAX_THREAD];
+	int tp = 0; /* toilet paper */
+	bool ret = false;
+
+#define new_thread(_ip, _sp) \
+	t[++tp] = (struct thread){ _ip, _sp, -1, -1 }
+
+	/* push the initial thread */
+	new_thread(0, 0);
+
+	while (tp) {
+		int ip = t[tp].ip, sp = t[tp].sp;
+//		printf("\nip: %d, sp: %d, tp: %d", ip, sp, tp);
+
+		if (tp == MAX_THREAD - 1) {
+			error(re, KTRE_ERROR_STACK_OVERFLOW, 0, "regex exceeded the maximum number of executable threads");
 			return false;
-
-		return run(re, subject, ip + 1, sp + 1, vec, vec_len);
-		break;
-	case INSTR_ANY:
-		if (subject[sp] == 0)
-			return false;
-		else
-			return run(re, subject, ip + 1, sp + 1, vec, vec_len);
-	case INSTR_SPLIT:
-		if (run(re, subject, re->c[ip].a, sp, vec, vec_len))
-			return true;
-
-		return run(re, subject, re->c[ip].b, sp, vec, vec_len);
-	case INSTR_MATCH:
-		return subject[sp] == 0;
-	case INSTR_SAVE: {
-		int old = vec[re->c[ip].c];
-
-		if (re->c[ip].c % 2 == 0)
-			vec[re->c[ip].c] = sp;
-		else
-			vec[re->c[ip].c] = sp - vec[re->c[ip].c - 1];
-
-		if (run(re, subject, ip + 1, sp, vec, vec_len)) {
-			return true;
 		}
 
-		vec[re->c[ip].c] = old;
-		return false;
-	} break;
-	default:
+		if (tp <= 0) {
+			error(re, KTRE_ERROR_INTERNAL_ERROR, 0, "regex killed more threads than it started");
+			return false;
+		}
+
+		switch (re->c[ip].op) {
+		case INSTR_CHAR:
+			tp--;
+			if (subject[sp] == re->c[ip].c) new_thread(ip + 1, sp + 1);
+			break;
+		case INSTR_ANY:
+			tp--;
+			if (subject[sp] != 0) new_thread(ip + 1, sp + 1);
+			break;
+		case INSTR_SPLIT:
+			t[tp].ip = re->c[ip].b;
+			new_thread(re->c[ip].a, sp);
+			break;
+		case INSTR_MATCH:
+			if (subject[sp] == 0)
+				return true;
+			tp--;
+			break;
+		case INSTR_SAVE:
+			if (t[tp].old == -1) {
+				t[tp].old = vec[re->c[ip].c];
+				t[tp].old_idx = re->c[ip].c;
+				if (re->c[ip].c % 2 == 0)
+					vec[re->c[ip].c] = sp;
+				else
+					vec[re->c[ip].c] = sp - vec[re->c[ip].c - 1];
+				new_thread(ip + 1, sp);
+			} else {
+				vec[t[tp].old_idx] = t[tp].old;
+				tp--;
+			}
+			break;
+		default:
 #ifdef KTRE_DEBUG
-		DBG("unimplemented instruction %d\n", re->c[ip].c);
-		assert(false);
+			DBG("unimplemented instruction %d\n", re->c[ip].c);
+			assert(false);
 #endif
-		return false;
+			return false;
+		}
 	}
 
-	assert(false);
-	return false;
+	return ret;
 }
 
 void
 ktre_free(struct ktre *re)
 {
 	free(re->c);
-	if (re->err_str) free(re->err_str);
+	if (re->err) free(re->err_str);
 	free(re);
 }
 
 _Bool
-ktre_exec(const struct ktre *re, const char *subject, int **vec)
+ktre_exec(struct ktre *re, const char *subject, int **vec)
 {
 	*vec = _calloc(sizeof (*vec[0]) * re->num_groups * 2);
 
-	if (run(re, subject, 0, 0, *vec, re->num_groups * 2)) {
+	if (run(re, subject, *vec)) {
 		return true;
 	} else {
 		free(*vec);

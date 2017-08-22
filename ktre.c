@@ -7,7 +7,7 @@
 
 int main(int argc, char *argv[])
 {
-	if (argc < 3) {
+	if (argc != 3) {
 		fprintf(stderr, "Usage: ktre [subject] [pattern]\n");
 		exit(EXIT_FAILURE);
 	}
@@ -18,9 +18,9 @@ int main(int argc, char *argv[])
 	int *vec = NULL;
 	struct ktre *re = ktre_compile(regex, 0);
 
-	if (re->err) {
+	if (re->err) { /* failed to compile */
 		printf("\nregex failed to compile with error code %d: %s\n", re->err, re->err_str);
-	} else if (ktre_exec(re, subject, &vec)) {
+	} else if (ktre_exec(re, subject, &vec)) { /* ran and succeeded */
 		printf("\nmatched!");
 
 		for (int i = 0; i < re->num_groups; i++)
@@ -28,7 +28,9 @@ int main(int argc, char *argv[])
 
 		putchar('\n');
 		free(vec);
-	} else {
+	} else if (re->err) { /* ran, but failed with an error */
+		printf("\nregex failed at runtime with error code %d: %s\n", re->err, re->err_str);
+	} else { /* ran, but failed */
 		printf("\ndid not match!\n");
 	}
 
