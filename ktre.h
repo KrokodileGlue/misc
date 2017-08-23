@@ -96,6 +96,8 @@ struct instr {
 		INSTR_CLASS,
 		INSTR_SPACE,
 		INSTR_BACKREFERENCE,
+		INSTR_BOL,
+		INSTR_EOL,
 		INSTR_SAVE
 	} op;
 
@@ -161,6 +163,8 @@ struct node {
 		NODE_CLASS,
 		NODE_SPACE,
 		NODE_BACKREFERENCE,
+		NODE_BOL,
+		NODE_EOL,
 		NODE_NONE
 	} type;
 
@@ -274,6 +278,14 @@ factor(struct ktre *re)
 	case '.':
 		NEXT;
 		left->type = NODE_ANY;
+		break;
+	case '^':
+		NEXT;
+		left->type = NODE_BOL;
+		break;
+	case '$':
+		NEXT;
+		left->type = NODE_BOL;
 		break;
 	default:
 		left->type = NODE_CHAR;
@@ -419,6 +431,8 @@ print_node(struct node *n)
 	case NODE_BACKREFERENCE: DBG("(backreference to %d)", n->c); break;
 	case NODE_CLASS:    DBG("(class '%s')", n->class); break;
 	case NODE_SPACE:    DBG("(space)"); break;
+	case NODE_BOL:      DBG("(bol)"); break;
+	case NODE_EOL:      DBG("(eol)"); break;
 	default:
 		DBG("\nunimplemented printer for node of type %d\n", n->type);
 		assert(false);
@@ -521,6 +535,14 @@ compile(struct ktre *re, struct node *n)
 		emit(re, INSTR_SPACE);
 		break;
 
+	case NODE_BOL:
+		emit(re, INSTR_BOL);
+		break;
+
+	case NODE_EOL:
+		emit(re, INSTR_EOL);
+		break;
+
 	case NODE_BACKREFERENCE:
 		emit_c(re, INSTR_BACKREFERENCE,
 		       n->c - 1 /* the numbers start at 1 instead of 0 */);
@@ -594,6 +616,8 @@ ktre_compile(const char *pat, int opt)
 		case INSTR_JP:    DBG("JP    %3d", re->c[i].c); break;
 		case INSTR_CLASS: DBG("CLASS '%s'", re->c[i].class); break;
 		case INSTR_SPACE: DBG("SPACE"); break;
+		case INSTR_BOL:   DBG("BOL"); break;
+		case INSTR_EOL:   DBG("EOL"); break;
 		case INSTR_BACKREFERENCE: DBG("BACKREF %d", re->c[i].c); break;
 		default: assert(false);
 		}
@@ -650,14 +674,27 @@ run(struct ktre *re, const char *subject, int *vec)
 			if (!strncmp(subject + sp, &subject[vec[re->c[ip].c * 2]], vec[re->c[ip].c * 2 + 1]))
 				new_thread(ip + 1, sp + vec[re->c[ip].c * 2 + 1]);
 			break;
+
 		case INSTR_CLASS:
 			tp--;
 			if (strchr(re->c[ip].class, subject[sp])) new_thread(ip + 1, sp + 1);
 			break;
+
 		case INSTR_SPACE:
 			tp--;
 			if (isspace(subject[sp])) new_thread(ip + 1, sp + 1);
 			break;
+
+		case INSTR_BOL:
+			tp--;
+			if (sp == 0) new_thread(ip + 1, sp);
+			break;
+
+		case INSTR_EOL:
+			tp--;
+			if (subject[sp + 1] == 0 || subject[sp + 1] == '\n') new_thread(ip + 1, sp);
+			break;
+
 		case INSTR_CHAR:
 			tp--;
 			if (re->opt & KTRE_INSENSITIVE) {
@@ -670,19 +707,23 @@ run(struct ktre *re, const char *subject, int *vec)
 				}
 			}
 			break;
+
 		case INSTR_ANY:
 			tp--;
 			if (subject[sp] != 0) new_thread(ip + 1, sp + 1);
 			break;
+
 		case INSTR_SPLIT:
 			t[tp].ip = re->c[ip].b;
 			new_thread(re->c[ip].a, sp);
 			break;
+
 		case INSTR_MATCH:
 			if (subject[sp] == 0)
 				return true;
 			tp--;
 			break;
+
 		case INSTR_SAVE:
 			if (t[tp].old == -1) {
 				t[tp].old = vec[re->c[ip].c];
@@ -697,9 +738,11 @@ run(struct ktre *re, const char *subject, int *vec)
 				tp--;
 			}
 			break;
+
 		case INSTR_JP:
 			t[tp].ip = re->c[ip].c;
 			break;
+
 		default:
 #ifdef KTRE_DEBUG
 			DBG("\nunimplemented instruction %d\n", re->c[ip].op);
