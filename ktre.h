@@ -249,7 +249,7 @@ factor(struct ktre *re)
 		char *class = NULL;
 		while (*re->sp && *re->sp != ']') {
 			if (re->sp[1] == '-' && re->sp[2] != ']') {
-				for (int i = re->sp[0]; i < re->sp[2]; i++) {
+				for (int i = re->sp[0]; i <= re->sp[2]; i++) {
 					class = append_to_str(class, i);
 				}
 				re->sp += 3;
