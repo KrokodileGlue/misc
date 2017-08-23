@@ -227,7 +227,7 @@ factor(struct ktre *re)
 			left->c = *re->sp - '0';
 			if (isdigit(re->sp[1])) {
 				left->c *= 10;
-				left->c += re->sp[1];
+				left->c += re->sp[1] - '0';
 				NEXT;
 			}
 			NEXT;
@@ -417,7 +417,7 @@ print_node(struct node *n)
 	case NODE_ANY:      DBG("(any)");             break;
 	case NODE_NONE:     DBG("(none)");            break;
 	case NODE_CHAR:     DBG("(char '%c')", n->c); break;
-	case NODE_BACKREFERENCE: DBG("(backreference '%d')", n->c); break;
+	case NODE_BACKREFERENCE: DBG("(backreference to %d)", n->c); break;
 	case NODE_CLASS:    DBG("(class '%s')", n->class); break;
 	case NODE_SPACE:    DBG("(space)"); break;
 	default:
