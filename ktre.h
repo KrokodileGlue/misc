@@ -22,6 +22,92 @@
  * SOFTWARE.
  */
 
+/*
+ * ktre: a tiny regex engine
+ * ktre supports character classes [a-zA-Z_], submatching and backreferencing
+ * (cat|dog)\1, negated character classes [^a-zA-Z_], a variety of escaped
+ * metacharacters (\w, \W, \d, \D, \s), mode modifiers (?ix), comments
+ * (?#this is a comment), free-spaced expressions, and, of course, the full
+ * set of metacharacters and operators you would expect: * + ? . ^ and $,
+ * including their non-greedy variants: *? +? and ??.
+ *
+ * ktre currently supports the following options: KTRE_INSENSITIVE,
+ * KTRE_UNANCHORED, and KTRE_EXTENDED. All of those options except for
+ * KTRE_UNANCHORED may be modified by the regular expression. The options are
+ * reset every time the regex is run.
+ *
+ * KTRE_INSENSITIVE: (?i)
+ *     Makes the runtime match characters of different cases.
+ * KTRE_UNANCHORED:
+ *     Counts a match anywhere in the subject as a match. The default behavior
+ *     is to reject any string that does not match exactly.
+ * KTRE_EXTENDED: (?x)
+ *     This option turns on so-called 'free-spaced' mode, which allows
+ *     whitespace to occur in most parts of the grammar. Note that this does
+ *     not allow whitespace anywhere; '(?#foobar)' is not the same thing as
+ *     '( ?#foobar)', but 'foobar' is the same as 'foo bar'. If you want to
+ *     match a whitespace character in free-spaced mode, you may escape
+ *     it: '\ '.
+ *
+ * The API consists of only three functions: ktre_compile(), ktre_exec(), and
+ * ktre_free(). The prototypes for these functions are:
+ *
+ * struct ktre *ktre_compile(const char *pat, int opt);
+ * _Bool ktre_exec(struct ktre *re, const char *subject, int **vec);
+ * void ktre_free(struct ktre *re);
+ *
+ * Here's a usage example:
+ *
+ * #include <stdlib.h>
+ * #include <stdio.h>
+ *
+ * #define KTRE_DEBUG
+ * #define KTRE_IMPLEMENTATION
+ * #include "ktre.h"
+ *
+ * int
+ * main(int argc, char *argv[])
+ * {
+ * 	if (argc != 3) {
+ * 		fprintf(stderr, "Usage: ktre [subject] [pattern]\n");
+ * 		exit(EXIT_FAILURE);
+ * 	}
+ *
+ * 	char *subject = argv[1], *regex = argv[2];
+ * 	fprintf(stderr, "matching string '%s' against regex '%s'", subject, regex);
+ *
+ * 	int *vec = NULL;
+ * 	struct ktre *re = ktre_compile(regex, KTRE_INSENSITIVE | KTRE_UNANCHORED);
+ *
+ * 	if (re->err) { // failed to compile
+ * 		fprintf(stderr, "\nregex failed to compile with error code %d: %s\n", re->err, re->err_str);
+ * 		fprintf(stderr, "\t%s\n\t", regex);
+ * 		for (int i = 0; i < re->loc; i++) fputc(' ', stderr);
+ * 		fprintf(stderr, "^\n");
+ * 	} else if (ktre_exec(re, subject, &vec)) { // ran and succeeded
+ * 		fprintf(stderr, "\nmatched!");
+ *
+ * 		for (int i = 0; i < re->num_groups; i++)
+ * 			fprintf(stderr, "\ngroup %d: '%.*s'", i + 1, vec[i * 2 + 1], &subject[vec[i * 2]]);
+ *
+ * 		fputc('\n', stderr);
+ * 		free(vec);
+ * 	} else if (re->err) { // ran, but failed with an error
+ * 		fprintf(stderr, "\nregex failed at runtime with error code %d: %s\n", re->err, re->err_str);
+ *
+ * 		fprintf(stderr, "\t%s\n\t", regex);
+ * 		for (int i = 0; i < re->loc; i++) putchar(' ');
+ * 		fprintf(stderr, "^\n");
+ * 	} else { // ran, but failed
+ * 		fprintf(stderr, "\ndid not match!\n");
+ * 	}
+ *
+ * 	ktre_free(re);
+ *
+ * 	return EXIT_SUCCESS;
+ * }
+ */
+
 #ifndef KTRE_H
 #define KTRE_H
 
@@ -30,7 +116,8 @@ enum ktre_error {
 	KTRE_ERROR_UNMATCHED_PAREN,
 	KTRE_ERROR_UNTERMINATED_CLASS,
 	KTRE_ERROR_STACK_OVERFLOW,
-	KTRE_ERROR_STACK_UNDERFLOW
+	KTRE_ERROR_STACK_UNDERFLOW,
+	KTRE_ERROR_INVALID_MODE_MODIFIER
 };
 
 struct ktre {
@@ -56,6 +143,7 @@ struct ktre {
 enum {
 	KTRE_INSENSITIVE = 1 << 0,
 	KTRE_UNANCHORED  = 1 << 1,
+	KTRE_EXTENDED  = 1 << 2,
 };
 
 struct ktre *ktre_compile(const char *pat, int opt);
@@ -123,6 +211,8 @@ struct instr {
 		INSTR_BACKREFERENCE,
 		INSTR_BOL,
 		INSTR_EOL,
+		INSTR_OPT_ON,
+		INSTR_OPT_OFF,
 		INSTR_SAVE
 	} op;
 
@@ -190,6 +280,8 @@ struct node {
 		NODE_BACKREFERENCE,
 		NODE_BOL,
 		NODE_EOL,
+		NODE_OPT_ON,
+		NODE_OPT_OFF,
 		NODE_NONE
 	} type;
 
@@ -216,7 +308,7 @@ error(struct ktre *re, enum ktre_error err, int loc, char *fmt, ...)
 	re->failed = true;
 	re->err = err;
 	re->err_str = _malloc(MAX_ERROR_LEN);
-	re->loc = loc - 1;
+	re->loc = loc;
 
 	va_list args;
 	va_start(args, fmt);
@@ -249,6 +341,7 @@ factor(struct ktre *re)
 {
 	struct node *left = _malloc(sizeof *left);
 
+again:
 	/* parse a primary */
 	switch (*re->sp) {
 	case '\\': /* escape sequences */
@@ -336,14 +429,63 @@ factor(struct ktre *re)
 
 	case '(':
 		NEXT;
-		left->type = NODE_GROUP;
-		left->a = parse(re);
 
-		if (*re->sp != ')') {
-			error(re, KTRE_ERROR_UNMATCHED_PAREN, re->sp - re->pat, "unmatched '(' at character %d", re->sp - re->pat);
-			free(left->a);
+		if (*re->sp == '?' && re->sp[1] == '#') { /* comments */
+			while (*re->sp && *re->sp != ')') re->sp++;
+			if (*re->sp != ')') {
+				error(re, KTRE_ERROR_UNMATCHED_PAREN, re->sp - re->pat, "unmatched '(' at character %d", re->sp - re->pat);
+				free(left->a);
+				left->type = NODE_NONE;
+				return left;
+			}
 			left->type = NODE_NONE;
-			return left;
+		} else if (*re->sp == '?') { /* mode modifiers */
+			NEXT;
+			left->type = NODE_NONE;
+			bool neg = false;
+			int opt;
+
+			while (*re->sp && *re->sp != ')') {
+				opt = 0;
+				switch (*re->sp) {
+				case 'i': opt |=  KTRE_INSENSITIVE;             break;
+				case 'c': opt |=  KTRE_INSENSITIVE; neg = true; break;
+				case 'x': opt |=  KTRE_EXTENDED;                break;
+				case 't': opt |=  KTRE_EXTENDED;    neg = true; break;
+				case '-': neg = true; NEXT; continue;
+				default:
+					error(re, KTRE_ERROR_INVALID_MODE_MODIFIER, re->sp - re->pat, "invalid mode modifier at character %d", re->sp - re->pat);
+					left->type = NODE_NONE;
+					return left;
+				}
+
+				struct node *tmp = _malloc(sizeof *tmp);
+				tmp->type = NODE_SEQUENCE;
+				tmp->a = left;
+				tmp->b = _malloc(sizeof *tmp->b);
+				tmp->b->type = neg ? NODE_OPT_OFF : NODE_OPT_ON;
+				tmp->b->c = opt;
+				left = tmp;
+
+				re->sp++;
+			}
+
+			if (*re->sp != ')') {
+				error(re, KTRE_ERROR_UNMATCHED_PAREN, re->sp - re->pat, "unmatched '(' at character %d", re->sp - re->pat);
+				free(left->a);
+				left->type = NODE_NONE;
+				return left;
+			}
+		} else {
+			left->type = NODE_GROUP;
+			left->a = parse(re);
+
+			if (*re->sp != ')') {
+				error(re, KTRE_ERROR_UNMATCHED_PAREN, re->sp - re->pat - 1, "unmatched '(' at character %d", re->sp - re->pat - 1);
+				free(left->a);
+				left->type = NODE_NONE;
+				return left;
+			}
 		}
 
 		NEXT;
@@ -361,6 +503,11 @@ factor(struct ktre *re)
 		left->type = NODE_EOL;
 		break;
 	default:
+		if (strchr(" \t\r\n\v\f", *re->sp)) {
+			NEXT;
+			goto again;
+		}
+
 		left->type = NODE_CHAR;
 		left->c = *re->sp;
 		NEXT;
@@ -503,9 +650,11 @@ print_node(struct node *n)
 	case NODE_CHAR:     DBG("(char '%c')", n->c);                break;
 	case NODE_BACKREFERENCE: DBG("(backreference to %d)", n->c); break;
 	case NODE_CLASS:    DBG("(class '%s')", n->class);           break;
-	case NODE_NOT:      DBG("(not '%s')", n->class);           break;
+	case NODE_NOT:      DBG("(not '%s')", n->class);             break;
 	case NODE_BOL:      DBG("(bol)");                            break;
 	case NODE_EOL:      DBG("(eol)");                            break;
+	case NODE_OPT_ON:   DBG("(opt on %d)", n->c);                break;
+	case NODE_OPT_OFF:  DBG("(opt off %d)", n->c);               break;
 	default:
 		DBG("\nunimplemented printer for node of type %d\n", n->type);
 		assert(false);
@@ -603,19 +752,24 @@ compile(struct ktre *re, struct node *n)
 	case NODE_CLASS:
 		emit_class(re, INSTR_CLASS, n->class);
 		break;
-
 	case NODE_NOT:
 		emit_class(re, INSTR_NOT, n->class);
 		break;
-
 	case NODE_BOL:
 		emit(re, INSTR_BOL);
 		break;
-
 	case NODE_EOL:
 		emit(re, INSTR_EOL);
 		break;
-
+	case NODE_NONE:
+		/* these nodes are created by comments, mode modifiers, and some other things. */
+		break;
+	case NODE_OPT_ON:
+		emit_c(re, INSTR_OPT_ON, n->c);
+		break;
+	case NODE_OPT_OFF:
+		emit_c(re, INSTR_OPT_OFF, n->c);
+		break;
 	case NODE_BACKREFERENCE:
 		emit_c(re, INSTR_BACKREFERENCE,
 		       n->c - 1 /* the numbers start at 1 instead of 0 */);
@@ -681,17 +835,19 @@ ktre_compile(const char *pat, int opt)
 		DBG("\n%3d: ", i);
 
 		switch (re->c[i].op) {
-		case INSTR_CHAR:  DBG("CHAR   '%c'", re->c[i].c); break;
-		case INSTR_SPLIT: DBG("SPLIT %3d, %3d", re->c[i].a, re->c[i].b); break;
-		case INSTR_ANY:   DBG("ANY"); break;
-		case INSTR_MATCH: DBG("MATCH"); break;
-		case INSTR_SAVE:  DBG("SAVE  %3d", re->c[i].c); break;
-		case INSTR_JP:    DBG("JP    %3d", re->c[i].c); break;
-		case INSTR_CLASS: DBG("CLASS '%s'", re->c[i].class); break;
-		case INSTR_NOT:   DBG("NOT   '%s'", re->c[i].class); break;
-		case INSTR_BOL:   DBG("BOL"); break;
-		case INSTR_EOL:   DBG("EOL"); break;
-		case INSTR_BACKREFERENCE: DBG("BACKREF %d", re->c[i].c); break;
+		case INSTR_CHAR:   DBG("CHAR   '%c'", re->c[i].c);                break;
+		case INSTR_SPLIT:  DBG("SPLIT %3d, %3d", re->c[i].a, re->c[i].b); break;
+		case INSTR_ANY:    DBG("ANY");                                    break;
+		case INSTR_MATCH:  DBG("MATCH");                                  break;
+		case INSTR_SAVE:   DBG("SAVE  %3d", re->c[i].c);                  break;
+		case INSTR_JP:     DBG("JP    %3d", re->c[i].c);                  break;
+		case INSTR_CLASS:  DBG("CLASS '%s'", re->c[i].class);             break;
+		case INSTR_NOT:    DBG("NOT   '%s'", re->c[i].class);             break;
+		case INSTR_BOL:    DBG("BOL");                                    break;
+		case INSTR_EOL:    DBG("EOL");                                    break;
+		case INSTR_OPT_ON: DBG("OPTON   %d", re->c[i].c);                 break;
+		case INSTR_OPT_OFF:DBG("OPTOFF  %d", re->c[i].c);                 break;
+		case INSTR_BACKREFERENCE: DBG("BACKREF %d", re->c[i].c);          break;
 		default: assert(false);
 		}
 	}
@@ -829,7 +985,14 @@ run(struct ktre *re, const char *subject, int *vec)
 		case INSTR_JP:
 			t[tp].ip = re->c[ip].c;
 			break;
-
+		case INSTR_OPT_ON:
+			re->opt |= re->c[ip].c;
+			t[tp].ip++;
+			break;
+		case INSTR_OPT_OFF:
+			re->opt &= ~re->c[ip].c;
+			t[tp].ip++;
+			break;
 		default:
 #ifdef KTRE_DEBUG
 			DBG("\nunimplemented instruction %d\n", re->c[ip].op);
