@@ -117,7 +117,8 @@ enum ktre_error {
 	KTRE_ERROR_UNTERMINATED_CLASS,
 	KTRE_ERROR_STACK_OVERFLOW,
 	KTRE_ERROR_STACK_UNDERFLOW,
-	KTRE_ERROR_INVALID_MODE_MODIFIER
+	KTRE_ERROR_INVALID_MODE_MODIFIER,
+	KTRE_ERROR_INVALID_RANGE
 };
 
 struct ktre {
@@ -158,6 +159,7 @@ void ktre_free(struct ktre *re);
 
 #ifdef KTRE_DEBUG
 #include <assert.h>
+#define DBG(...) fprintf(stderr, __VA_ARGS__)
 #endif
 
 static void *
@@ -282,14 +284,17 @@ struct node {
 		NODE_EOL,
 		NODE_OPT_ON,
 		NODE_OPT_OFF,
+		NODE_REP,
 		NODE_NONE
 	} type;
 
-	union {
+	struct {
 		struct {
 			struct node *a, *b;
 		};
-		int c;
+		struct {
+			int c, d;
+		};
 		char *class;
 	};
 };
@@ -520,16 +525,83 @@ again:
 		switch (re->sp[-1]) {
 		case '*': n->type = NODE_ASTERISK; break;
 		case '?': n->type = NODE_QUESTION; break;
-		case '+': n->type = NODE_PLUS; break;
-		case '{':
-			/* NEXT; */
-			/* int len = 0; */
+		case '+': n->type = NODE_PLUS;     break;
+		case '{': { /* counted repetition */
+			int len = 0, a = 0, b = 0;
 
-			/* while (re->sp[len] != '}' && re->sp[len] != ',' && re->sp[len]) len++; */
-			/* if (re->sp[len] == ',') { */
+			while (re->sp[len] != '}' && re->sp[len] != ',' && re->sp[len]) len++;
+			if (re->sp[len] == ',') {
+				len--;
+				for (int i = len; i >= 0; i--) {
+					if (!isdigit(re->sp[i])) {
+						error(re, KTRE_ERROR_INVALID_RANGE, re->pat - re->sp + i,
+						      "non-digits and negative numbers are forbidden in counted repetitions");
+						left->type = NODE_NONE;
+						return left;
+					}
 
-			/* } */
-			break;
+					if (i == len) a = re->sp[i] - '0';
+					else {
+						int d = re->sp[i] - '0';
+						for (int j = 0; j < len - i; j++) {
+							d *= 10;
+						}
+						a += d;
+					}
+				}
+
+				re->sp += len + 2;
+				len = 0;
+
+				while (re->sp[len] != '}' && re->sp[len]) len++;
+				len--;
+				for (int i = len; i >= 0; i--) {
+					if (!isdigit(re->sp[i])) {
+						error(re, KTRE_ERROR_INVALID_RANGE, re->pat - re->sp + i,
+						      "non-digits and negative numbers are forbidden in counted repetitions");
+						left->type = NODE_NONE;
+						return left;
+					}
+
+					if (i == len) b = re->sp[i] - '0';
+					else {
+						int d = re->sp[i] - '0';
+						for (int j = 0; j < len - i; j++) {
+							d *= 10;
+						}
+						b += d;
+					}
+				}
+
+				re->sp += len + 2;
+			} else {
+				len--;
+				for (int i = len; i >= 0; i--) {
+					if (!isdigit(re->sp[i])) {
+						error(re, KTRE_ERROR_INVALID_RANGE, re->pat - re->sp + i,
+						      "non-digits and negative numbers are forbidden in counted repetitions");
+						left->type = NODE_NONE;
+						return left;
+					}
+
+					if (i == len) a = re->sp[i] - '0';
+					else {
+						int d = re->sp[i] - '0';
+						for (int j = 0; j < len - i; j++) {
+							d *= 10;
+						}
+						a += d;
+					}
+				}
+
+				re->sp += len + 2;
+				b = -1;
+			}
+
+			n->type = NODE_REP;
+			n->c = a;
+			n->d = b;
+		} break;
 		}
 
 		n->a = left;
@@ -600,8 +672,6 @@ free_node(struct node *n)
 }
 
 #ifdef KTRE_DEBUG
-#define DBG(...) fprintf(stderr, __VA_ARGS__)
-
 static void
 print_node(struct node *n)
 {
@@ -655,6 +725,12 @@ print_node(struct node *n)
 	case NODE_EOL:      DBG("(eol)");                            break;
 	case NODE_OPT_ON:   DBG("(opt on %d)", n->c);                break;
 	case NODE_OPT_OFF:  DBG("(opt off %d)", n->c);               break;
+	case NODE_REP:
+		DBG("(counted repetition %d - %d)", n->c, n->d);
+		l++;
+		print_node(n->a);
+		l--;
+		break;
 	default:
 		DBG("\nunimplemented printer for node of type %d\n", n->type);
 		assert(false);
@@ -774,6 +850,27 @@ compile(struct ktre *re, struct node *n)
 		emit_c(re, INSTR_BACKREFERENCE,
 		       n->c - 1 /* the numbers start at 1 instead of 0 */);
 		break;
+	case NODE_REP: {
+		int a = 0;
+		for (int i = 0; i < n->c; i++) {
+			a = re->ip;
+			compile(re, n->a);
+		}
+
+		if (n->d == 0) {
+			emit_ab(re, INSTR_SPLIT, a, re->ip + 1);
+		} else {
+			/* this will fail to do anything if n->d is less than n->c,
+			 * which handles the case where n->d == -1.
+			 * n->d == -1 when the repetition is of the form {n}. */
+			for (int i = 0; i < n->d - n->c; i++) {
+				a = re->ip;
+				emit_ab(re, INSTR_SPLIT, re->ip + 1, -1);
+				compile(re, n->a);
+				patch_b(re, a, re->ip);
+			}
+		}
+	} break;
 
 	default:
 #ifdef KTRE_DEBUG
@@ -797,6 +894,7 @@ ktre_compile(const char *pat, int opt)
 		switch (opt & 1 << i) {
 		case KTRE_INSENSITIVE: DBG("\n\tINSENSITIVE"); break;
 		case KTRE_UNANCHORED: DBG("\n\tUNANCHORED"); break;
+		case KTRE_EXTENDED: DBG("\n\tEXTENDED"); break;
 		default: continue;
 		}
 	}
