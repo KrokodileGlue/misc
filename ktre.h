@@ -41,6 +41,7 @@ void ktre_free(struct ktre *re);
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 #ifdef KTRE_DEBUG
 #include <assert.h>
@@ -93,6 +94,8 @@ struct instr {
 		INSTR_SPLIT,
 		INSTR_ANY,
 		INSTR_CLASS,
+		INSTR_SPACE,
+		INSTR_BACKREFERENCE,
 		INSTR_SAVE
 	} op;
 
@@ -156,6 +159,8 @@ struct node {
 		NODE_QUESTION,
 		NODE_ANY,
 		NODE_CLASS,
+		NODE_SPACE,
+		NODE_BACKREFERENCE,
 		NODE_NONE
 	} type;
 
@@ -211,9 +216,29 @@ factor(struct ktre *re)
 	switch (*re->sp) {
 	case '\\': /* escape sequences */
 		NEXT;
-		left->type = NODE_CHAR;
-		left->c = *re->sp;
+		switch (*re->sp) {
+		case 's':
+			left->type = NODE_SPACE;
+			NEXT;
+			break;
+		case '0': case '1': case '2': case '3': case '4':
+		case '5': case '6': case '7': case '8': case '9':
+			left->type = NODE_BACKREFERENCE;
+			left->c = *re->sp - '0';
+			if (isdigit(re->sp[1])) {
+				left->c *= 10;
+				left->c += re->sp[1];
+				NEXT;
+			}
+			NEXT;
+			break;
+		default:
+			left->type = NODE_CHAR;
+			left->c = *re->sp;
+			NEXT;
+		}
 		break;
+
 	case '[': /* character classes */
 		NEXT;
 		left->type = NODE_CLASS;
@@ -256,16 +281,25 @@ factor(struct ktre *re)
 		NEXT;
 	}
 
-	while (*re->sp && (*re->sp == '*' || *re->sp == '+' || *re->sp == '?')) {
+	while (*re->sp && (*re->sp == '*' || *re->sp == '+' || *re->sp == '?' || *re->sp == '{')) {
 		NEXT;
 		struct node *n = _malloc(sizeof *n);
 
-		if (re->sp[-1] == '*')
-			n->type = NODE_ASTERISK;
-		else if (re->sp[-1] == '?')
-			n->type = NODE_QUESTION;
-		else
-			n->type = NODE_PLUS;
+		switch (re->sp[-1]) {
+		case '*': n->type = NODE_ASTERISK; break;
+		case '?': n->type = NODE_QUESTION; break;
+		case '+': n->type = NODE_PLUS; break;
+		case '{':
+			/* NEXT; */
+			/* int len = 0; */
+
+			/* while (re->sp[len] != '}' && re->sp[len] != ',' && re->sp[len]) len++; */
+			/* if (re->sp[len] == ',') { */
+
+			/* } */
+			break;
+		default: assert(false);
+		}
 
 		n->a = left;
 		left = n;
@@ -383,9 +417,11 @@ print_node(struct node *n)
 	case NODE_ANY:      DBG("(any)");             break;
 	case NODE_NONE:     DBG("(none)");            break;
 	case NODE_CHAR:     DBG("(char '%c')", n->c); break;
+	case NODE_BACKREFERENCE: DBG("(backreference '%d')", n->c); break;
 	case NODE_CLASS:    DBG("(class '%s')", n->class); break;
+	case NODE_SPACE:    DBG("(space)"); break;
 	default:
-		DBG("unimplemented printer for node of type %d\n", n->type);
+		DBG("\nunimplemented printer for node of type %d\n", n->type);
 		assert(false);
 	}
 #undef N
@@ -482,9 +518,18 @@ compile(struct ktre *re, struct node *n)
 		emit_class(re, INSTR_CLASS, n->class);
 		break;
 
+	case NODE_SPACE:
+		emit(re, INSTR_SPACE);
+		break;
+
+	case NODE_BACKREFERENCE:
+		emit_c(re, INSTR_BACKREFERENCE,
+		       n->c - 1 /* the numbers start at 1 instead of 0 */);
+		break;
+
 	default:
 #ifdef KTRE_DEBUG
-		DBG("unimplemented compiler for node of type %d\n", n->type);
+		DBG("\nunimplemented compiler for node of type %d\n", n->type);
 		assert(false);
 #endif
 		break;
@@ -524,6 +569,8 @@ ktre_compile(const char *pat, int opt)
 		case INSTR_SAVE:  DBG("SAVE  %3d", re->c[i].c); break;
 		case INSTR_JP:    DBG("JP    %3d", re->c[i].c); break;
 		case INSTR_CLASS: DBG("CLASS '%s'", re->c[i].class); break;
+		case INSTR_SPACE: DBG("SPACE"); break;
+		case INSTR_BACKREFERENCE: DBG("BACKREF %d", re->c[i].c); break;
 		default: assert(false);
 		}
 	}
@@ -564,9 +611,18 @@ run(struct ktre *re, const char *subject, int *vec)
 		}
 
 		switch (re->c[ip].op) {
+		case INSTR_BACKREFERENCE:
+			tp--;
+			if (!strncmp(subject + sp, &subject[vec[re->c[ip].c * 2]], vec[re->c[ip].c * 2 + 1]))
+				new_thread(ip + 1, sp + vec[re->c[ip].c * 2 + 1]);
+			break;
 		case INSTR_CLASS:
 			tp--;
 			if (strchr(re->c[ip].class, subject[sp])) new_thread(ip + 1, sp + 1);
+			break;
+		case INSTR_SPACE:
+			tp--;
+			if (isspace(subject[sp])) new_thread(ip + 1, sp + 1);
 			break;
 		case INSTR_CHAR:
 			tp--;
