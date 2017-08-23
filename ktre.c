@@ -16,10 +16,13 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "matching string '%s' against regex '%s'", subject, regex);
 
 	int *vec = NULL;
-	struct ktre *re = ktre_compile(regex, 0);
+	struct ktre *re = ktre_compile(regex, KTRE_INSENSITIVE | KTRE_UNANCHORED);
 
 	if (re->err) { /* failed to compile */
 		printf("\nregex failed to compile with error code %d: %s\n", re->err, re->err_str);
+		printf("\t%s\n\t", regex);
+		for (int i = 0; i < re->loc; i++) putchar(' ');
+		printf("^\n");
 	} else if (ktre_exec(re, subject, &vec)) { /* ran and succeeded */
 		printf("\nmatched!");
 
@@ -30,6 +33,10 @@ int main(int argc, char *argv[])
 		free(vec);
 	} else if (re->err) { /* ran, but failed with an error */
 		printf("\nregex failed at runtime with error code %d: %s\n", re->err, re->err_str);
+
+		printf("\t%s\n\t", regex);
+		for (int i = 0; i < re->loc; i++) putchar(' ');
+		printf("^\n");
 	} else { /* ran, but failed */
 		printf("\ndid not match!\n");
 	}

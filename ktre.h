@@ -5,7 +5,7 @@ enum ktre_error {
 	KTRE_ERROR_NO_ERROR,
 	KTRE_ERROR_UNMATCHED_PAREN,
 	KTRE_ERROR_STACK_OVERFLOW,
-	KTRE_ERROR_INTERNAL_ERROR
+	KTRE_ERROR_STACK_UNDERFLOW
 };
 
 struct ktre {
@@ -187,7 +187,7 @@ error(struct ktre *re, enum ktre_error err, int loc, char *fmt, ...)
 	re->failed = true;
 	re->err = err;
 	re->err_str = _malloc(MAX_ERROR_LEN);
-	re->loc = loc;
+	re->loc = loc - 1;
 
 	va_list args;
 	va_start(args, fmt);
@@ -298,7 +298,6 @@ factor(struct ktre *re)
 
 			/* } */
 			break;
-		default: assert(false);
 		}
 
 		n->a = left;
@@ -543,15 +542,40 @@ ktre_compile(const char *pat, int opt)
 	re->pat = pat, re->opt = opt, re->sp = pat;
 	re->err_str = "no error";
 
+#ifdef KTRE_DEBUG
+	DBG("\noptions set:");
+	for (size_t i = 0; i < sizeof opt; i++) {
+		switch (opt & 1 << i) {
+		case KTRE_INSENSITIVE: DBG("\n\tINSENSITIVE"); break;
+		case KTRE_UNANCHORED: DBG("\n\tUNANCHORED"); break;
+		default: continue;
+		}
+	}
+#endif
+
 	re->n = parse(re);
 	if (re->failed) {
 		free_node(re->n);
 		return re;
 	}
 
+	/* just emit the bytecode for .* */
+	if (re->opt & KTRE_UNANCHORED) {
+		emit_ab(re, INSTR_SPLIT, 1, 3);
+		emit(re, INSTR_ANY);
+		emit_ab(re, INSTR_SPLIT, 1, 3);
+	}
+
 	compile(re, re->n);
 	if (re->failed)
 		return re;
+
+	/* just emit the bytecode for .* */
+	if (re->opt & KTRE_UNANCHORED) {
+		emit_ab(re, INSTR_SPLIT, re->ip + 1, re->ip + 3);
+		emit(re, INSTR_ANY);
+		emit_ab(re, INSTR_SPLIT, re->ip - 1, re->ip + 1);
+	}
 
 	emit(re, INSTR_MATCH);
 
@@ -580,6 +604,16 @@ ktre_compile(const char *pat, int opt)
 	return re;
 }
 
+static inline char
+lc(char c)
+{
+	if (c >= 'A' && c <= 'Z') {
+		c = (c - 'A') + 'a';
+	}
+
+	return c;
+}
+
 #define MAX_THREAD (1 << 11) /* 2048 should be enough */
 static bool
 run(struct ktre *re, const char *subject, int *vec)
@@ -606,7 +640,7 @@ run(struct ktre *re, const char *subject, int *vec)
 		}
 
 		if (tp <= 0) {
-			error(re, KTRE_ERROR_INTERNAL_ERROR, 0, "regex killed more threads than it started");
+			error(re, KTRE_ERROR_STACK_UNDERFLOW, 0, "regex killed more threads than it started");
 			return false;
 		}
 
@@ -626,7 +660,15 @@ run(struct ktre *re, const char *subject, int *vec)
 			break;
 		case INSTR_CHAR:
 			tp--;
-			if (subject[sp] == re->c[ip].c) new_thread(ip + 1, sp + 1);
+			if (re->opt & KTRE_INSENSITIVE) {
+				if (lc(subject[sp]) == lc(re->c[ip].c)) {
+					new_thread(ip + 1, sp + 1);
+				}
+			} else {
+				if (subject[sp] == re->c[ip].c) {
+					new_thread(ip + 1, sp + 1);
+				}
+			}
 			break;
 		case INSTR_ANY:
 			tp--;
@@ -673,6 +715,10 @@ run(struct ktre *re, const char *subject, int *vec)
 void
 ktre_free(struct ktre *re)
 {
+	for (int i = 0; i < re->ip; i++)
+		if (re->c[i].op == INSTR_CLASS)
+			free(re->c[i].class);
+
 	free(re->c);
 	if (re->err) free(re->err_str);
 	free(re);
