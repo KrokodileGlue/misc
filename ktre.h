@@ -4,6 +4,7 @@
 enum ktre_error {
 	KTRE_ERROR_NO_ERROR,
 	KTRE_ERROR_UNMATCHED_PAREN,
+	KTRE_ERROR_UNTERMINATED_CLASS,
 	KTRE_ERROR_STACK_OVERFLOW,
 	KTRE_ERROR_STACK_UNDERFLOW
 };
@@ -94,7 +95,7 @@ struct instr {
 		INSTR_SPLIT,
 		INSTR_ANY,
 		INSTR_CLASS,
-		INSTR_SPACE,
+		INSTR_NOT,
 		INSTR_BACKREFERENCE,
 		INSTR_BOL,
 		INSTR_EOL,
@@ -161,7 +162,7 @@ struct node {
 		NODE_QUESTION,
 		NODE_ANY,
 		NODE_CLASS,
-		NODE_SPACE,
+		NODE_NOT,
 		NODE_BACKREFERENCE,
 		NODE_BOL,
 		NODE_EOL,
@@ -211,6 +212,14 @@ append_to_str(char *class, char c)
 	return class;
 }
 
+static char *
+strclone(const char *str)
+{
+	char *ret = _malloc(strlen(str) + 1);
+	strcpy(ret, str);
+	return ret;
+}
+
 static struct node *
 factor(struct ktre *re)
 {
@@ -222,7 +231,18 @@ factor(struct ktre *re)
 		NEXT;
 		switch (*re->sp) {
 		case 's':
-			left->type = NODE_SPACE;
+			left->type = NODE_CLASS;
+			left->class = strclone(" \t\r\n\v\f");
+			NEXT;
+			break;
+		case 'd':
+			left->type = NODE_CLASS;
+			left->class = strclone("0123456789");
+			NEXT;
+			break;
+		case 'w':
+			left->type = NODE_CLASS;
+			left->class = strclone("_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
 			NEXT;
 			break;
 		case '0': case '1': case '2': case '3': case '4':
@@ -243,9 +263,17 @@ factor(struct ktre *re)
 		}
 		break;
 
-	case '[': /* character classes */
+	case '[': { /* character classes */
+		int loc = re->sp - re->pat;
 		NEXT;
-		left->type = NODE_CLASS;
+
+		if (*re->sp == '^') {
+			NEXT;
+			left->type = NODE_NOT;
+		} else {
+			left->type = NODE_CLASS;
+		}
+
 		char *class = NULL;
 		while (*re->sp && *re->sp != ']') {
 			if (re->sp[1] == '-' && re->sp[2] != ']') {
@@ -258,9 +286,15 @@ factor(struct ktre *re)
 				re->sp++;
 			}
 		}
+
+		if (*re->sp != ']') {
+			error(re, KTRE_ERROR_UNTERMINATED_CLASS, loc, "unterminated character class");
+		}
+
 		left->class = class;
 		NEXT;
-		break;
+	} break;
+
 	case '(':
 		NEXT;
 		left->type = NODE_GROUP;
@@ -421,18 +455,18 @@ print_node(struct node *n)
 		print_node(n->b);
 		l--;
 		break;
-	case NODE_ASTERISK: N("(asterisk)");          break;
-	case NODE_PLUS:     N("(plus)");              break;
-	case NODE_GROUP:    N("(group)");             break;
-	case NODE_QUESTION: N("(question)");          break;
-	case NODE_ANY:      DBG("(any)");             break;
-	case NODE_NONE:     DBG("(none)");            break;
-	case NODE_CHAR:     DBG("(char '%c')", n->c); break;
+	case NODE_ASTERISK: N("(asterisk)");                         break;
+	case NODE_PLUS:     N("(plus)");                             break;
+	case NODE_GROUP:    N("(group)");                            break;
+	case NODE_QUESTION: N("(question)");                         break;
+	case NODE_ANY:      DBG("(any)");                            break;
+	case NODE_NONE:     DBG("(none)");                           break;
+	case NODE_CHAR:     DBG("(char '%c')", n->c);                break;
 	case NODE_BACKREFERENCE: DBG("(backreference to %d)", n->c); break;
-	case NODE_CLASS:    DBG("(class '%s')", n->class); break;
-	case NODE_SPACE:    DBG("(space)"); break;
-	case NODE_BOL:      DBG("(bol)"); break;
-	case NODE_EOL:      DBG("(eol)"); break;
+	case NODE_CLASS:    DBG("(class '%s')", n->class);           break;
+	case NODE_NOT:      DBG("(not '%s')", n->class);           break;
+	case NODE_BOL:      DBG("(bol)");                            break;
+	case NODE_EOL:      DBG("(eol)");                            break;
 	default:
 		DBG("\nunimplemented printer for node of type %d\n", n->type);
 		assert(false);
@@ -531,8 +565,8 @@ compile(struct ktre *re, struct node *n)
 		emit_class(re, INSTR_CLASS, n->class);
 		break;
 
-	case NODE_SPACE:
-		emit(re, INSTR_SPACE);
+	case NODE_NOT:
+		emit_class(re, INSTR_NOT, n->class);
 		break;
 
 	case NODE_BOL:
@@ -583,9 +617,9 @@ ktre_compile(const char *pat, int opt)
 
 	/* just emit the bytecode for .* */
 	if (re->opt & KTRE_UNANCHORED) {
-		emit_ab(re, INSTR_SPLIT, 1, 3);
+		emit_ab(re, INSTR_SPLIT, 3, 1);
 		emit(re, INSTR_ANY);
-		emit_ab(re, INSTR_SPLIT, 1, 3);
+		emit_ab(re, INSTR_SPLIT, 3, 1);
 	}
 
 	compile(re, re->n);
@@ -615,7 +649,7 @@ ktre_compile(const char *pat, int opt)
 		case INSTR_SAVE:  DBG("SAVE  %3d", re->c[i].c); break;
 		case INSTR_JP:    DBG("JP    %3d", re->c[i].c); break;
 		case INSTR_CLASS: DBG("CLASS '%s'", re->c[i].class); break;
-		case INSTR_SPACE: DBG("SPACE"); break;
+		case INSTR_NOT:   DBG("NOT   '%s'", re->c[i].class); break;
 		case INSTR_BOL:   DBG("BOL"); break;
 		case INSTR_EOL:   DBG("EOL"); break;
 		case INSTR_BACKREFERENCE: DBG("BACKREF %d", re->c[i].c); break;
@@ -677,12 +711,26 @@ run(struct ktre *re, const char *subject, int *vec)
 
 		case INSTR_CLASS:
 			tp--;
-			if (strchr(re->c[ip].class, subject[sp])) new_thread(ip + 1, sp + 1);
+			if (re->opt & KTRE_INSENSITIVE) {
+				if (strchr(re->c[ip].class, subject[sp])
+				    || strchr(re->c[ip].class, lc(subject[sp])))
+					new_thread(ip + 1, sp + 1);
+			} else {
+				if (strchr(re->c[ip].class, subject[sp]))
+					new_thread(ip + 1, sp + 1);
+			}
 			break;
 
-		case INSTR_SPACE:
+		case INSTR_NOT:
 			tp--;
-			if (isspace(subject[sp])) new_thread(ip + 1, sp + 1);
+			if (re->opt & KTRE_INSENSITIVE) {
+				if (!strchr(re->c[ip].class, subject[sp])
+				    || !strchr(re->c[ip].class, lc(subject[sp])))
+					new_thread(ip + 1, sp + 1);
+			} else {
+				if (!strchr(re->c[ip].class, subject[sp]))
+					new_thread(ip + 1, sp + 1);
+			}
 			break;
 
 		case INSTR_BOL:
