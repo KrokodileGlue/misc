@@ -334,6 +334,15 @@ append_to_str(char *class, char c)
 }
 
 static char *
+append_str_to_str(char *class, const char *c)
+{
+	size_t len = class ? strlen(class) : 0;
+	class = _realloc(class, len + strlen(c) + 1);
+	strcpy(class + len, c);
+	return class;
+}
+
+static char *
 strclone(const char *str)
 {
 	char *ret = _malloc(strlen(str) + 1);
@@ -393,6 +402,11 @@ again:
 			}
 			NEXT;
 			break;
+		case 'n':
+			left->type = NODE_CHAR;
+			left->c = '\n';
+			NEXT;
+			break;
 		default:
 			left->type = NODE_CHAR;
 			left->c = *re->sp;
@@ -418,6 +432,26 @@ again:
 					class = append_to_str(class, i);
 				}
 				re->sp += 3;
+			} else if (*re->sp == '\\') {
+				NEXT;
+
+				switch (*re->sp) {
+				case 's':
+					append_str_to_str(class, " \t\r\n\v\f");
+					re->sp++;
+					break;
+				case 'd':
+					append_str_to_str(class, "0123456789");
+					re->sp++;
+					break;
+				case 'w':
+					append_str_to_str(class, "_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
+					re->sp++;
+					break;
+				case 'n':
+					append_to_str(class, '\n');
+					re->sp++;
+				}
 			} else {
 				class = append_to_str(class, *re->sp);
 				re->sp++;
