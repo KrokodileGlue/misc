@@ -27,7 +27,7 @@ int main(int argc, char *argv[])
 		printf("\nmatched!");
 
 		for (int i = 0; i < re->num_groups; i++)
-			printf("\ngroup %d: '%.*s'", i, vec[i * 2 + 1], &subject[vec[i * 2]]);
+			printf("\ngroup %d: '%.*s'", i + 1, vec[i * 2 + 1], &subject[vec[i * 2]]);
 
 		putchar('\n');
 		free(vec);

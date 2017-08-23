@@ -285,7 +285,7 @@ factor(struct ktre *re)
 		break;
 	case '$':
 		NEXT;
-		left->type = NODE_BOL;
+		left->type = NODE_EOL;
 		break;
 	default:
 		left->type = NODE_CHAR;
@@ -692,7 +692,7 @@ run(struct ktre *re, const char *subject, int *vec)
 
 		case INSTR_EOL:
 			tp--;
-			if (subject[sp + 1] == 0 || subject[sp + 1] == '\n') new_thread(ip + 1, sp);
+			if (subject[sp] == 0 || subject[sp] == '\n') new_thread(ip + 1, sp);
 			break;
 
 		case INSTR_CHAR:
