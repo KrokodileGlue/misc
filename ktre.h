@@ -118,7 +118,8 @@ enum ktre_error {
 	KTRE_ERROR_STACK_OVERFLOW,
 	KTRE_ERROR_STACK_UNDERFLOW,
 	KTRE_ERROR_INVALID_MODE_MODIFIER,
-	KTRE_ERROR_INVALID_RANGE
+	KTRE_ERROR_INVALID_RANGE,
+	KTRE_ERROR_INVALID_BACKREFERENCE
 };
 
 struct ktre {
@@ -297,6 +298,8 @@ struct node {
 		};
 		char *class;
 	};
+
+	int loc;
 };
 
 #define NEXT                             \
@@ -354,6 +357,7 @@ static struct node *
 factor(struct ktre *re)
 {
 	struct node *left = _malloc(sizeof *left);
+	left->loc = 0;
 
 again:
 	/* parse a primary */
@@ -543,7 +547,8 @@ again:
 		left->type = NODE_EOL;
 		break;
 	default:
-		if (strchr(" \t\r\n\v\f", *re->sp)) {
+		/* ignore whitespace if we're in extended mode */
+		if (re->opt & KTRE_EXTENDED && strchr(" \t\r\n\v\f", *re->sp)) {
 			NEXT;
 			goto again;
 		}
@@ -642,6 +647,8 @@ again:
 		n->a = left;
 		left = n;
 	}
+
+	left->loc = re->sp - re->pat - 1;
 
 	return left;
 }
@@ -834,9 +841,7 @@ compile(struct ktre *re, struct node *n)
 		int old = re->num_groups;
 		re->num_groups++;
 		compile(re, n->a);
-		re->num_groups--;
 		emit_c(re, INSTR_SAVE, old * 2 + 1);
-		re->num_groups++;
 	} break;
 
 	case NODE_ANY:
@@ -882,6 +887,10 @@ compile(struct ktre *re, struct node *n)
 		emit_c(re, INSTR_OPT_OFF, n->c);
 		break;
 	case NODE_BACKREFERENCE:
+		if (n->c <= 0 || n->c - 1 >= re->num_groups) {
+			error(re, KTRE_ERROR_INVALID_BACKREFERENCE, n->loc, "backreference number is invalid or references a group that does not yet exist");
+		return;
+		}
 		emit_c(re, INSTR_BACKREFERENCE,
 		       n->c - 1 /* the numbers start at 1 instead of 0 */);
 		break;
@@ -941,7 +950,7 @@ ktre_compile(const char *pat, int opt)
 		return re;
 	}
 
-	/* just emit the bytecode for .* */
+	/* just emit the bytecode for .*? */
 	if (re->opt & KTRE_UNANCHORED) {
 		emit_ab(re, INSTR_SPLIT, 3, 1);
 		emit(re, INSTR_ANY);
@@ -1141,6 +1150,11 @@ ktre_free(struct ktre *re)
 _Bool
 ktre_exec(struct ktre *re, const char *subject, int **vec)
 {
+	if (re->err) {
+		free(re->err_str);
+		re->err = 0;
+	}
+
 	*vec = _calloc(sizeof (*vec[0]) * re->num_groups * 2);
 
 	if (run(re, subject, *vec)) {
