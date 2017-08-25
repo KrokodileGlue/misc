@@ -88,7 +88,7 @@
  * 		fprintf(stderr, "\nmatched!");
  *
  * 		for (int i = 0; i < re->num_groups; i++)
- * 			fprintf(stderr, "\ngroup %d: '%.*s'", i + 1, vec[i * 2 + 1], &subject[vec[i * 2]]);
+ * 			fprintf(stderr, "\ngroup %d: '%.*s'", i, vec[i * 2 + 1], &subject[vec[i * 2]]);
  *
  * 		fputc('\n', stderr);
  * 		free(vec);
@@ -892,7 +892,7 @@ compile(struct ktre *re, struct node *n)
 		return;
 		}
 		emit_c(re, INSTR_BACKREFERENCE,
-		       n->c - 1 /* the numbers start at 1 instead of 0 */);
+		       n->c);
 		break;
 	case NODE_REP: {
 		int a = 0;
@@ -957,9 +957,15 @@ ktre_compile(const char *pat, int opt)
 		emit_ab(re, INSTR_SPLIT, 3, 1);
 	}
 
+	/* the entire match is grouped */
+	emit_c(re, INSTR_SAVE, 0);
+	re->num_groups++;
+
 	compile(re, re->n);
 	if (re->failed)
 		return re;
+
+	emit_c(re, INSTR_SAVE, 1);
 
 	/* just emit the bytecode for .* */
 	if (re->opt & KTRE_UNANCHORED) {
