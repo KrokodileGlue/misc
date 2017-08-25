@@ -481,16 +481,16 @@ again:
 		} else if (*re->sp == '?') { /* mode modifiers */
 			NEXT;
 			left->type = NODE_NONE;
-			bool neg = false;
+			bool neg = false, off = false;
 			int opt;
 
 			while (*re->sp && *re->sp != ')') {
 				opt = 0;
 				switch (*re->sp) {
 				case 'i': opt |=  KTRE_INSENSITIVE;             break;
-				case 'c': opt |=  KTRE_INSENSITIVE; neg = true; break;
+				case 'c': opt |=  KTRE_INSENSITIVE; off = true; break;
 				case 'x': opt |=  KTRE_EXTENDED;                break;
-				case 't': opt |=  KTRE_EXTENDED;    neg = true; break;
+				case 't': opt |=  KTRE_EXTENDED;    off = true; break;
 				case '-': neg = true; NEXT; continue;
 				default:
 					error(re, KTRE_ERROR_INVALID_MODE_MODIFIER, re->sp - re->pat, "invalid mode modifier at character %d", re->sp - re->pat);
@@ -502,10 +502,11 @@ again:
 				tmp->type = NODE_SEQUENCE;
 				tmp->a = left;
 				tmp->b = _malloc(sizeof *tmp->b);
-				tmp->b->type = neg ? NODE_OPT_OFF : NODE_OPT_ON;
+				tmp->b->type = off || neg ? NODE_OPT_OFF : NODE_OPT_ON;
 				tmp->b->c = opt;
 				left = tmp;
 
+				off = false;
 				re->sp++;
 			}
 
