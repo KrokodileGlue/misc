@@ -1005,18 +1005,18 @@ run(struct ktre *re, const char *subject, int *vec)
 {
 	struct thread {
 		int ip, sp;
-		int old, old_idx;
+		int old, old_idx, opt;
 	} t[MAX_THREAD];
 	int tp = 0; /* toilet paper */
 
-#define new_thread(_ip, _sp) \
-	t[++tp] = (struct thread){ _ip, _sp, -1, -1 }
+#define new_thread(_ip, _sp, _opt) \
+	t[++tp] = (struct thread){ _ip, _sp, -1, -1, _opt }
 
 	/* push the initial thread */
-	new_thread(0, 0);
+	new_thread(0, 0, re->opt);
 
 	while (tp) {
-		int ip = t[tp].ip, sp = t[tp].sp;
+		int ip = t[tp].ip, sp = t[tp].sp, opt = t[tp].opt;
 //		printf("\nip: %d, sp: %d, tp: %d", ip, sp, tp);
 
 		if (tp == MAX_THREAD - 1) {
@@ -1033,64 +1033,52 @@ run(struct ktre *re, const char *subject, int *vec)
 		case INSTR_BACKREFERENCE:
 			tp--;
 			if (!strncmp(subject + sp, &subject[vec[re->c[ip].c * 2]], vec[re->c[ip].c * 2 + 1]))
-				new_thread(ip + 1, sp + vec[re->c[ip].c * 2 + 1]);
+				new_thread(ip + 1, sp + vec[re->c[ip].c * 2 + 1], opt);
 			break;
 
 		case INSTR_CLASS:
 			tp--;
-			if (re->opt & KTRE_INSENSITIVE) {
-				if (strchr(re->c[ip].class, subject[sp])
-				    || strchr(re->c[ip].class, lc(subject[sp])))
-					new_thread(ip + 1, sp + 1);
-			} else {
-				if (strchr(re->c[ip].class, subject[sp]))
-					new_thread(ip + 1, sp + 1);
-			}
+			if (strchr(re->c[ip].class, subject[sp]))
+				new_thread(ip + 1, sp + 1, opt);
 			break;
 
 		case INSTR_NOT:
 			tp--;
-			if (re->opt & KTRE_INSENSITIVE) {
-				if (!strchr(re->c[ip].class, subject[sp])
-				    || !strchr(re->c[ip].class, lc(subject[sp])))
-					new_thread(ip + 1, sp + 1);
-			} else {
-				if (!strchr(re->c[ip].class, subject[sp]))
-					new_thread(ip + 1, sp + 1);
-			}
+			if (!strchr(re->c[ip].class, subject[sp]))
+				new_thread(ip + 1, sp + 1, opt);
 			break;
 
 		case INSTR_BOL:
 			tp--;
-			if (sp == 0) new_thread(ip + 1, sp);
+			if (sp == 0) new_thread(ip + 1, sp, opt);
 			break;
 
 		case INSTR_EOL:
 			tp--;
-			if (subject[sp] == 0 || subject[sp] == '\n') new_thread(ip + 1, sp);
+			if (subject[sp] == 0 || subject[sp] == '\n') new_thread(ip + 1, sp, opt);
 			break;
 
 		case INSTR_CHAR:
 			tp--;
-			if (re->opt & KTRE_INSENSITIVE) {
+			if (opt & KTRE_INSENSITIVE) {
 				if (lc(subject[sp]) == lc(re->c[ip].c)) {
-					new_thread(ip + 1, sp + 1);
+				  new_thread(ip + 1, sp + 1, opt);
 				}
 			} else {
 				if (subject[sp] == re->c[ip].c) {
-					new_thread(ip + 1, sp + 1);
+				  new_thread(ip + 1, sp + 1, opt);
 				}
 			}
 			break;
 
 		case INSTR_ANY:
 			tp--;
-			if (subject[sp] != 0) new_thread(ip + 1, sp + 1);
+			if (subject[sp] != 0) new_thread(ip + 1, sp + 1, opt);
 			break;
 
 		case INSTR_SPLIT:
 			t[tp].ip = re->c[ip].b;
-			new_thread(re->c[ip].a, sp);
+			new_thread(re->c[ip].a, sp, opt);
 			break;
 
 		case INSTR_MATCH:
@@ -1107,7 +1095,7 @@ run(struct ktre *re, const char *subject, int *vec)
 					vec[re->c[ip].c] = sp;
 				else
 					vec[re->c[ip].c] = sp - vec[re->c[ip].c - 1];
-				new_thread(ip + 1, sp);
+				new_thread(ip + 1, sp, opt);
 			} else {
 				vec[t[tp].old_idx] = t[tp].old;
 				tp--;
@@ -1118,11 +1106,11 @@ run(struct ktre *re, const char *subject, int *vec)
 			t[tp].ip = re->c[ip].c;
 			break;
 		case INSTR_OPT_ON:
-			re->opt |= re->c[ip].c;
+			t[tp].opt |= re->c[ip].c;
 			t[tp].ip++;
 			break;
 		case INSTR_OPT_OFF:
-			re->opt &= ~re->c[ip].c;
+			t[tp].opt &= ~re->c[ip].c;
 			t[tp].ip++;
 			break;
 		default:
