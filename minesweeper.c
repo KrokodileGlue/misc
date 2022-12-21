@@ -65,7 +65,7 @@ tile_visit(struct game *g, int y, int x)
 {
         tile_reveal(g, y, x);
 
-        usleep(1000000 / 100);
+        usleep(1000000 / (100 + g->nvisited));
 
         for (int Y = y - 1; Y <= y + 1; Y++)
                 for (int X = x - 1; X <= x + 1; X++) {
@@ -231,7 +231,7 @@ set_up_us_the_bomb(struct game *g)
 
 void set_up_us_the_bombs(struct game *g)
 {
-        for (int i = 0; i < g->col * g->row / 10; i++)
+        for (int i = 0; i < g->col * g->row / 9; i++)
                 set_up_us_the_bomb(g);
 }
 
