@@ -145,7 +145,7 @@ setupterminal(struct game *g)
         struct winsize w;
         ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
 
-        g->row = w.ws_row - 1, g->col = w.ws_col;
+        g->row = w.ws_row - 2, g->col = w.ws_col;
 
         /* Then configure the input buffering behavior. */
         struct termios term, term_orig;
@@ -231,7 +231,7 @@ set_up_us_the_bomb(struct game *g)
 
 void set_up_us_the_bombs(struct game *g)
 {
-        for (int i = 0; i < g->col * g->row / 9; i++)
+        for (int i = 0; i < g->col * g->row / 5; i++)
                 set_up_us_the_bomb(g);
 }
 
@@ -275,6 +275,9 @@ main(void)
 
         struct game *g = calloc(1, sizeof *g);
         game_init(g);
+
+        printf("\e[2J");
+        fflush(stdout);
 
         while (1) {
                 printf("\e[%d,%dH", g->c.y + 1, g->c.x + 1);
