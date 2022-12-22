@@ -21,14 +21,13 @@ struct game {
                 bool bomb;
                 bool revealed;
                 bool flagged;
+                bool mark;
                 int bombs;      /* Number of bombs in surrounding tiles */
         } **b;
 
         struct point unvisited[10000];
         unsigned nunvisited;
-
-        struct point visited[10000];
-        unsigned nvisited;
+        unsigned nmark;
 };
 
 void
@@ -65,25 +64,35 @@ tile_visit(struct game *g, int y, int x)
 {
         tile_reveal(g, y, x);
 
-        usleep(1000000 / (100 + g->nvisited));
+        usleep(1000000 / (100 + g->nmark));
 
         for (int Y = y - 1; Y <= y + 1; Y++)
                 for (int X = x - 1; X <= x + 1; X++) {
                         if (Y < 0 || Y >= g->row || X < 0 || X >= g->col)
                                 continue;
+
+                        /*
+                         * Never reveal a bomb.
+                         */
                         if (g->b[Y][X].bomb)
                                 continue;
+
                         tile_reveal(g, Y, X);
-                        if (g->b[Y][X].bombs)
+
+                        /*
+                         * If it's been visited or it has bombs
+                         * surrounding it then we want to reveal it,
+                         * but not its neighbors.
+                         */
+                        if (g->b[Y][X].bombs || g->b[Y][X].mark)
                                 continue;
+
                         bool found = false;
                         for (unsigned i = 0; i < g->nunvisited; i++)
                                 if (g->unvisited[i].x == X && g->unvisited[i].y == Y)
                                         found = true;
-                        for (unsigned i = 0; i < g->nvisited; i++)
-                                if (g->visited[i].x == X && g->visited[i].y == Y)
-                                        found = true;
                         if (found) continue;
+
                         g->unvisited[g->nunvisited++] = (struct point){
                                 .x = X,
                                 .y = Y,
@@ -97,7 +106,8 @@ tile_flood(struct game *g, int y, int x)
         if (g->b[y][x].revealed) return;
 
         g->nunvisited = 0;
-        g->nvisited = 0;
+        g->nmark = 0;
+
         g->unvisited[g->nunvisited++] = (struct point){
                 .x = x,
                 .y = y,
@@ -107,7 +117,8 @@ tile_flood(struct game *g, int y, int x)
                 struct point point = g->unvisited[0];
                 memmove(g->unvisited, g->unvisited + 1, (g->nunvisited - 1) * sizeof *g->unvisited);
                 g->nunvisited--;
-                g->visited[g->nvisited++] = point;
+                g->nmark++;
+                g->b[point.y][point.x].mark = true;
                 tile_visit(g, point.y, point.x);
         }
 }
@@ -231,7 +242,7 @@ set_up_us_the_bomb(struct game *g)
 
 void set_up_us_the_bombs(struct game *g)
 {
-        for (int i = 0; i < g->col * g->row / 5; i++)
+        for (int i = 0; i < g->col * g->row / 10; i++)
                 set_up_us_the_bomb(g);
 }
 
