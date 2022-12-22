@@ -33,7 +33,7 @@ struct game {
 void
 tile_render(struct game *g, int y, int x)
 {
-        printf("\e[%d,%dH", y + 1, x + 1);
+        printf("\e[%d;%dH", y + 1, x + 1);
 
         if (g->b[y][x].flagged) printf("\e[48;5;202m");
 
@@ -291,7 +291,7 @@ main(void)
         fflush(stdout);
 
         while (1) {
-                printf("\e[%d,%dH", g->c.y + 1, g->c.x + 1);
+                printf("\e[%d;%dH", g->c.y + 1, g->c.x + 1);
                 fflush(stdout);
 
                 char move;

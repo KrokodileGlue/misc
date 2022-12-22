@@ -47,7 +47,7 @@ char *color[] = {
 void draw_background_cell(struct game *g, int y, int x)
 {
         (void)g;
-        printf("\e[%d,%dH\e[48;2;%d;%d;%dm  \e[0m",
+        printf("\e[%d;%dH\e[48;2;%d;%d;%dm  \e[0m",
                y + 1, 2 * x + 1,
                255 - y * 10 - 50, x * 20, 100);
 }
@@ -65,7 +65,7 @@ void undraw_current(struct game *g)
 void draw_current(struct game *g)
 {
         for (int i = 0; i < 4; i++)
-                printf("\e[%d,%dH%s  \e[m",
+                printf("\e[%d;%dH%s  \e[m",
                        g->piece.y + g->piece.b[i * 2 + 1] + 1,
                        2 * (g->piece.x + g->piece.b[i * 2]) + 1,
                        color[g->piece.type]);
@@ -136,7 +136,7 @@ void freeze_piece(struct game *g)
                         for (int x = 0; x < COL; x++) {
                                 draw_background_cell(g, i, x);
                                 if (g->b[i][x])
-                                        printf("\e[%d,%dH%s  \e[m",
+                                        printf("\e[%d;%dH%s  \e[m",
                                                i + 1,
                                                2 * x + 1,
                                                color[g->b[i][x] - 1]);
