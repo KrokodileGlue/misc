@@ -1,0 +1,3 @@
+[submodule "gifenc"]
+	path = gifenc
+	url = https://github.com/lecram/gifenc
