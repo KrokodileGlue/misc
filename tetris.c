@@ -22,7 +22,9 @@ struct game {
 
         timer_t timerid;
         struct itimerspec ts;
-};
+} *g;
+
+int score, level, lines;
 
 int pieces[][8] = {
         { 0, 0, -1,  0, 1, 0,  0, 1 }, /* T piece */
@@ -44,7 +46,14 @@ char *color[] = {
         "\e[48;2;255;255;255m",
 };
 
-void draw_background_cell(struct game *g, int y, int x)
+void render_score(void)
+{
+        printf("\e[%d;%dHscore: %d", ROW / 2, 2 * COL + 2, score);
+        printf("\e[%d;%dHlevel: %d", ROW / 2 + 1, 2 * COL + 2, level);
+        printf("\e[%d;%dHlines: %d", ROW / 2 + 2, 2 * COL + 2, lines);
+}
+
+void draw_background_cell(int y, int x)
 {
         (void)g;
         printf("\e[%d;%dH\e[48;2;%d;%d;%dm  \e[0m",
@@ -53,16 +62,15 @@ void draw_background_cell(struct game *g, int y, int x)
 }
 
 /* Erases the current piece. */
-void undraw_current(struct game *g)
+void undraw_current(void)
 {
         for (int i = 0; i < 4; i++)
-                draw_background_cell(g,
-                                     g->piece.y + g->piece.b[i * 2 + 1],
+                draw_background_cell(g->piece.y + g->piece.b[i * 2 + 1],
                                      g->piece.x + g->piece.b[i * 2]);
 }
 
 /* Draws the current piece. */
-void draw_current(struct game *g)
+void draw_current(void)
 {
         for (int i = 0; i < 4; i++)
                 printf("\e[%d;%dH%s  \e[m",
@@ -71,30 +79,31 @@ void draw_current(struct game *g)
                        color[g->piece.type]);
 }
 
-int will_collide(struct game *g, int yoff, int xoff)
+int will_collide(int yoff, int xoff)
 {
         int y = g->piece.y + yoff, x = g->piece.x + xoff;
 
         for (int i = 0; i < 4; i++) {
                 int Y = y + g->piece.b[i * 2 + 1],
                         X = x + g->piece.b[i * 2];
-                if (g->b[Y][X] || Y >= ROW || X < 0 || X >= COL)
+                if (Y < 0) continue;
+                if (Y >= ROW || X < 0 || X >= COL || g->b[Y][X])
                         return 1;
         }
 
         return 0;
 }
 
-void move_piece(struct game *g, int y, int x)
+void move_piece(int y, int x)
 {
-        if (will_collide(g, y, x)) return;
-        undraw_current(g);
+        if (will_collide(y, x)) return;
+        undraw_current();
         g->piece.y += y;
         g->piece.x += x;
-        draw_current(g);
+        draw_current();
 }
 
-void pick_piece(struct game *g)
+void pick_piece(void)
 {
         int n = rand() % 7;
 
@@ -105,22 +114,52 @@ void pick_piece(struct game *g)
         memcpy(g->piece.b, pieces[n], sizeof *pieces);
 }
 
-void rotate_piece(struct game *g)
+void rotate_piece(void)
 {
         if (g->piece.type == 2) return;
-        undraw_current(g);
-	for (int i = 0; i < 4; i++) {
+
+        int buf[sizeof g->piece.b];
+        memcpy(buf, g->piece.b, sizeof buf);
+
+        undraw_current();
+
+        for (int i = 0; i < 4; i++) {
                 int temp = g->piece.b[i * 2 + 1];
                 g->piece.b[i * 2 + 1] = g->piece.b[i * 2];
                 g->piece.b[i * 2] = -temp;
 	}
-        draw_current(g);
+
+        if (will_collide(0, 0)) {
+                memcpy(g->piece.b, buf, sizeof buf);
+                draw_current();
+                return;
+        }
+
+        draw_current();
 }
 
-void freeze_piece(struct game *g)
+struct termios term, term_orig;
+
+void terminate_gracefully(int arg)
 {
-        for (int i = 0; i < 4; i++)
-                g->b[g->piece.y + g->piece.b[i * 2 + 1]][g->piece.x + g->piece.b[i * 2]] = g->piece.type + 1;
+        (void)arg;
+        tcsetattr(0, TCSANOW, &term_orig); /* Reset terminal attributes */
+        printf("\e[?1049l\e[?25h");        /* Reset screen state */
+        printf("final score: %d\n", score);
+        exit(0);                           /* Die */
+}
+
+void freeze_piece(void)
+{
+        for (int i = 0; i < 4; i++) {
+                int y = g->piece.y + g->piece.b[i * 2 + 1], x = g->piece.x + g->piece.b[i * 2];
+                if (y < 0) terminate_gracefully(0);
+                if (x >= COL || y >= ROW || x < 0) continue;
+                if (g->b[y][x]) terminate_gracefully(0);
+                g->b[y][x] = g->piece.type + 1;
+        }
+
+        int num_cleared = 0;
 
         /* Check win state */
         for (int y = 0; y < ROW; y++) {
@@ -129,12 +168,13 @@ void freeze_piece(struct game *g)
                         if (!g->b[y][x])
                                 full = 0;
                 if (!full) continue;
+                num_cleared++;
 
                 /* Clear this line */
                 for (int i = y; i >= 0; i--) {
                         if (i) memcpy(g->b[i], g->b[i - 1], sizeof *g->b);
                         for (int x = 0; x < COL; x++) {
-                                draw_background_cell(g, i, x);
+                                draw_background_cell(i, x);
                                 if (g->b[i][x])
                                         printf("\e[%d;%dH%s  \e[m",
                                                i + 1,
@@ -146,33 +186,45 @@ void freeze_piece(struct game *g)
                 y--;
         }
 
-        pick_piece(g);
+        switch (num_cleared) {
+                case 1: score += 40 * (level + 1); break;
+                case 2: score += 100 * (level + 1); break;
+                case 3: score += 300 * (level + 1); break;
+                case 4: score += 1200 * (level + 1); break;
+        }
+
+        if (lines % 10 > (lines + num_cleared) % 10) level++;
+        if (level >= 20) level = 20;
+        lines += num_cleared;
+
+        render_score();
+
+        timer_settime(g->timerid, 0, &g->ts, 0);
+        pick_piece();
 }
 
-void hard_drop(struct game *g)
+void hard_drop(void)
 {
-        undraw_current(g);
-        while (!will_collide(g, 1, 0)) g->piece.y++;
-        draw_current(g);
-        freeze_piece(g);
-        draw_current(g);
+        undraw_current();
+        while (!will_collide(1, 0)) g->piece.y++;
+        draw_current();
+        freeze_piece();
+        draw_current();
 }
 
-int cmd(struct game *g, char move)
+int cmd(char move)
 {
         switch (move) {
-        case 'w': rotate_piece(g); break;
-        case 's': move_piece(g, 1, 0); break;
-        case 'a': move_piece(g, 0, -1); break;
-        case 'd': move_piece(g, 0, 1); break;
-        case ' ': hard_drop(g); break;
-        case 'r': pick_piece(g); break;
+        case 'w': rotate_piece(); break;
+        case 's': move_piece(1, 0); break;
+        case 'a': move_piece(0, -1); break;
+        case 'd': move_piece(0, 1); break;
+        case ' ': hard_drop(); break;
+        case 'q': terminate_gracefully(0); break;
         }
 
         return 0;
 }
-
-struct termios term, term_orig;
 
 int setupterminal()
 {
@@ -198,28 +250,20 @@ int setupterminal()
         return 0;
 }
 
-void terminate_gracefully(int arg)
-{
-        (void)arg;
-        tcsetattr(0, TCSANOW, &term_orig); /* Reset terminal attributes */
-        printf("\e[?1049l\e[?25h");        /* Reset screen state */
-        exit(0);                           /* Die */
-}
-
 void timer_callback(union sigval arg)
 {
         struct game *g = (struct game *)arg.sival_ptr;
 
-        if (will_collide(g, 1, 0)) {
-                freeze_piece(g);
+        if (will_collide(1, 0)) {
+                freeze_piece();
         } else {
-                move_piece(g, 1, 0);
+                move_piece(1, 0);
         }
 
         timer_settime(g->timerid, 0, &g->ts, 0);
 }
 
-void game_init(struct game *g)
+void game_init(void)
 {
         /* Make a one second timer spec. */
         g->ts = (struct itimerspec){ .it_value.tv_sec = 1 };
@@ -248,10 +292,10 @@ void game_init(struct game *g)
         /* Initialize the actual game state. */
         for (int y = 0; y < ROW; y++)
                 for (int x = 0; x < COL; x++)
-                        draw_background_cell(g, y, x);
+                        draw_background_cell(y, x);
 
-        pick_piece(g);
-        draw_current(g);
+        pick_piece();
+        draw_current();
 }
 
 int main(void)
@@ -261,12 +305,12 @@ int main(void)
 
         setupterminal();
 
-        struct game *g = calloc(1, sizeof *g);
-        game_init(g);
+        g = calloc(1, sizeof *g);
+        game_init();
 
         while (1) {
                 char move;
                 if (!read(0, &move, 1)) return 1;
-                if (cmd(g, move)) return 0;
+                if (cmd(move)) return 0;
         }
 }
