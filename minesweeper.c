@@ -55,6 +55,7 @@ int
 tile_reveal(struct game *g, int y, int x)
 {
         g->b[y][x].revealed = true;
+        g->b[y][x].flagged = false;
         tile_render(g, y, x);
         return g->b[y][x].bomb;
 }
@@ -257,7 +258,8 @@ cmd(struct game *g, char move)
         case 'a': x--; break;
         case 'd': x++; break;
         case 'f':
-                g->b[y][x].flagged = !g->b[y][x].flagged;
+                if (!g->b[y][x].revealed)
+                        g->b[y][x].flagged = !g->b[y][x].flagged;
                 break;
         case 'e':
                 if (!g->has_bombs) {
