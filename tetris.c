@@ -20,11 +20,12 @@ struct game {
 
         unsigned char b[ROW][COL];
 
+        int score, level, lines;
+        int next_piece;
+
         timer_t timerid;
         struct itimerspec ts;
 } *g;
-
-int score, level, lines;
 
 int levels[] = {
         53, 49, 45, 41, 37, 33, 28, 22, 17, 11,
@@ -51,11 +52,11 @@ char *color[] = {
         "\e[48;2;255;255;255m",
 };
 
-void render_score(void)
+void draw_score(void)
 {
-        printf("\e[%d;%dHscore: %d", ROW / 2, 2 * COL + 2, score);
-        printf("\e[%d;%dHlevel: %d", ROW / 2 + 1, 2 * COL + 2, level);
-        printf("\e[%d;%dHlines: %d", ROW / 2 + 2, 2 * COL + 2, lines);
+        printf("\e[%d;%dHscore: %d", ROW / 2, 2 * COL + 2, g->score);
+        printf("\e[%d;%dHlevel: %d", ROW / 2 + 1, 2 * COL + 2, g->level);
+        printf("\e[%d;%dHlines: %d", ROW / 2 + 2, 2 * COL + 2, g->lines);
 }
 
 void draw_background_cell(int y, int x)
@@ -64,6 +65,24 @@ void draw_background_cell(int y, int x)
         printf("\e[%d;%dH\e[48;2;%d;%d;%dm  \e[0m",
                y + 1, 2 * x + 1,
                255 - y * 10 - 50, x * 20, 100);
+}
+
+void undraw_preview(void)
+{
+        for (int i = 0; i < 4; i++)
+                printf("\e[%d;%dH%s  \e[m",
+                       1 + pieces[g->next_piece][i * 2 + 1] + 1,
+                       2 * (COL + 2 + pieces[g->next_piece][i * 2]) + 1,
+                       "\e[m");
+}
+
+void draw_preview(void)
+{
+        for (int i = 0; i < 4; i++)
+                printf("\e[%d;%dH%s  \e[m",
+                       1 + pieces[g->next_piece][i * 2 + 1] + 1,
+                       2 * (COL + 2 + pieces[g->next_piece][i * 2]) + 1,
+                       color[g->next_piece]);
 }
 
 /* Erases the current piece. */
@@ -99,24 +118,56 @@ int will_collide(int yoff, int xoff)
         return 0;
 }
 
+void undraw_shadow(void)
+{
+        int tmpy = g->piece.y;
+        while (!will_collide(1, 0)) g->piece.y++;
+        undraw_current();
+        g->piece.y = tmpy;
+}
+
+void draw_shadow(void)
+{
+        int tmpy = g->piece.y;
+        while (!will_collide(1, 0)) g->piece.y++;
+        for (int i = 0; i < 4; i++) {
+                int y = g->piece.y + g->piece.b[i * 2 + 1];
+                int x = g->piece.x + g->piece.b[i * 2];
+                printf("\e[%d;%dH\e[48;2;%d;%d;%dm  \e[0m",
+                        y + 1, 2 * x + 1,
+                        255 - y * 10 - 50 + 50,
+                        x * 20 + 50,
+                        100 + 50);
+        }
+        g->piece.y = tmpy;
+}
+
 void move_piece(int y, int x)
 {
         if (will_collide(y, x)) return;
         undraw_current();
+        undraw_shadow();
         g->piece.y += y;
         g->piece.x += x;
+        draw_shadow();
         draw_current();
 }
 
 void pick_piece(void)
 {
-        int n = rand() % 7;
+        int n = g->next_piece;
+
+        undraw_preview();
+        g->next_piece = rand() % 7;
+        draw_preview();
 
         g->piece.x = 4;
         g->piece.y = 0;
         g->piece.type = n;
 
         memcpy(g->piece.b, pieces[n], sizeof *pieces);
+        draw_shadow();
+        draw_current();
 }
 
 void rotate_piece(void)
@@ -126,6 +177,7 @@ void rotate_piece(void)
         int buf[sizeof g->piece.b];
         memcpy(buf, g->piece.b, sizeof buf);
 
+        undraw_shadow();
         undraw_current();
 
         for (int i = 0; i < 4; i++) {
@@ -136,10 +188,12 @@ void rotate_piece(void)
 
         if (will_collide(0, 0)) {
                 memcpy(g->piece.b, buf, sizeof buf);
+                draw_shadow();
                 draw_current();
                 return;
         }
 
+        draw_shadow();
         draw_current();
 }
 
@@ -150,14 +204,15 @@ void terminate_gracefully(int arg)
         (void)arg;
         tcsetattr(0, TCSANOW, &term_orig); /* Reset terminal attributes */
         printf("\e[?1049l\e[?25h");        /* Reset screen state */
-        printf("final score: %d\n", score);
+        printf("final score: %d\n", g->score);
         exit(0);                           /* Die */
 }
 
 void freeze_piece(void)
 {
         for (int i = 0; i < 4; i++) {
-                int y = g->piece.y + g->piece.b[i * 2 + 1], x = g->piece.x + g->piece.b[i * 2];
+                int y = g->piece.y + g->piece.b[i * 2 + 1];
+                int x = g->piece.x + g->piece.b[i * 2];
                 if (y < 0) terminate_gracefully(0);
                 if (x >= COL || y >= ROW || x < 0) continue;
                 if (g->b[y][x]) terminate_gracefully(0);
@@ -192,21 +247,21 @@ void freeze_piece(void)
         }
 
         switch (num_cleared) {
-                case 1: score += 40 * (level + 1); break;
-                case 2: score += 100 * (level + 1); break;
-                case 3: score += 300 * (level + 1); break;
-                case 4: score += 1200 * (level + 1); break;
+                case 1: g->score += 40 * (g->level + 1); break;
+                case 2: g->score += 100 * (g->level + 1); break;
+                case 3: g->score += 300 * (g->level + 1); break;
+                case 4: g->score += 1200 * (g->level + 1); break;
         }
 
-        if (lines % 10 > (lines + num_cleared) % 10) level++;
-        if (level >= 20) level = 20;
-        lines += num_cleared;
+        if (g->lines % 10 > (g->lines + num_cleared) % 10) g->level++;
+        if (g->level >= 20) g->level = 20;
+        g->lines += num_cleared;
 
         if (num_cleared) {
-                g->ts = (struct itimerspec){ .it_value.tv_nsec = ((float)levels[level] / 60.0) * 1000000000.0 };
+                g->ts = (struct itimerspec){ .it_value.tv_nsec = ((float)levels[g->level] / 60.0) * 1000000000.0 };
         }
 
-        render_score();
+        draw_score();
 
         timer_settime(g->timerid, 0, &g->ts, 0);
         pick_piece();
@@ -225,7 +280,10 @@ int cmd(char move)
 {
         switch (move) {
         case 'w': rotate_piece(); break;
-        case 's': move_piece(1, 0); break;
+        case 's':
+                  move_piece(1, 0);
+                  timer_settime(g->timerid, 0, &g->ts, 0);
+                  break;
         case 'a': move_piece(0, -1); break;
         case 'd': move_piece(0, 1); break;
         case ' ': hard_drop(); break;
@@ -261,13 +319,8 @@ int setupterminal()
 
 void timer_callback(union sigval arg)
 {
-        struct game *g = (struct game *)arg.sival_ptr;
-
-        if (will_collide(1, 0)) {
-                freeze_piece();
-        } else {
-                move_piece(1, 0);
-        }
+        if (will_collide(1, 0)) freeze_piece();
+        else move_piece(1, 0);
 
         timer_settime(g->timerid, 0, &g->ts, 0);
 }
@@ -303,8 +356,10 @@ void game_init(void)
                 for (int x = 0; x < COL; x++)
                         draw_background_cell(y, x);
 
+        g->next_piece = rand() % 7;
         pick_piece();
         draw_current();
+        draw_score();
 }
 
 int main(void)
