@@ -26,6 +26,11 @@ struct game {
 
 int score, level, lines;
 
+int levels[] = {
+        53, 49, 45, 41, 37, 33, 28, 22, 17, 11,
+        10, 9, 8, 7, 6, 6, 5, 5, 4, 4, 3
+};
+
 int pieces[][8] = {
         { 0, 0, -1,  0, 1, 0,  0, 1 }, /* T piece */
         { 0, 0,  0, -1, 0, 1,  1, 1 }, /* L piece */
@@ -197,6 +202,10 @@ void freeze_piece(void)
         if (level >= 20) level = 20;
         lines += num_cleared;
 
+        if (num_cleared) {
+                g->ts = (struct itimerspec){ .it_value.tv_nsec = ((float)levels[level] / 60.0) * 1000000000.0 };
+        }
+
         render_score();
 
         timer_settime(g->timerid, 0, &g->ts, 0);
@@ -266,7 +275,7 @@ void timer_callback(union sigval arg)
 void game_init(void)
 {
         /* Make a one second timer spec. */
-        g->ts = (struct itimerspec){ .it_value.tv_sec = 1 };
+        g->ts = (struct itimerspec){ .it_value.tv_nsec = ((float)levels[0] / 60.0) * 1000000000 };
 
         /* Create a thread-based timer. */
         timer_create(CLOCK_REALTIME,
