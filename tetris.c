@@ -174,6 +174,17 @@ void move_piece(int y, int x)
         draw_current();
 }
 
+struct termios term, term_orig;
+
+void terminate_gracefully(int arg)
+{
+        (void)arg;
+        tcsetattr(0, TCSANOW, &term_orig); /* Reset terminal attributes */
+        printf("\e[?1049l\e[?25h");        /* Reset screen state */
+        printf("final score: %d\n", g->score);
+        exit(0);                           /* Die */
+}
+
 void pick_piece(void)
 {
         int n = g->next_piece;
@@ -187,6 +198,14 @@ void pick_piece(void)
         g->piece.type = n;
 
         memcpy(g->piece.b, pieces[n], sizeof *pieces);
+
+        for (int i = 0; i < 4; i++) {
+                int y = g->piece.y + g->piece.b[i * 2 + 1];
+                int x = g->piece.x + g->piece.b[i * 2];
+                if (y < 0) continue;
+                if (g->b[y][x]) terminate_gracefully(0);
+        }
+
         draw_shadow();
         draw_current();
 }
@@ -218,20 +237,9 @@ void rotate_piece(void)
         draw_current();
 }
 
-struct termios term, term_orig;
-
 void sigwinch_handler(int arg)
 {
         redraw();
-}
-
-void terminate_gracefully(int arg)
-{
-        (void)arg;
-        tcsetattr(0, TCSANOW, &term_orig); /* Reset terminal attributes */
-        printf("\e[?1049l\e[?25h");        /* Reset screen state */
-        printf("final score: %d\n", g->score);
-        exit(0);                           /* Die */
 }
 
 void freeze_piece(void)
@@ -239,9 +247,7 @@ void freeze_piece(void)
         for (int i = 0; i < 4; i++) {
                 int y = g->piece.y + g->piece.b[i * 2 + 1];
                 int x = g->piece.x + g->piece.b[i * 2];
-                if (y < 0) terminate_gracefully(0);
-                if (x >= COL || y >= ROW || x < 0) continue;
-                if (g->b[y][x]) terminate_gracefully(0);
+                if (x >= COL || y >= ROW || x < 0 || y < 0) continue;
                 g->b[y][x] = g->piece.type + 1;
         }
 
@@ -257,7 +263,7 @@ void freeze_piece(void)
                 num_cleared++;
 
                 /* Clear this line */
-                for (int i = y; i >= 0; i--) {
+                for (int i = y; i > 0; i--) {
                         if (i) memcpy(g->b[i], g->b[i - 1], sizeof *g->b);
                         for (int x = 0; x < COL; x++) {
                                 draw_background_cell(i, x);
@@ -268,6 +274,8 @@ void freeze_piece(void)
                                                color[g->b[i][x] - 1]);
                         }
                 }
+
+                memset(g->b[0], 0, sizeof *g->b);
 
                 y--;
         }
