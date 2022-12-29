@@ -66,7 +66,7 @@ void draw_background_cell(int y, int x)
         (void)g;
         printf("\e[%d;%dH\e[48;2;%d;%d;%dm  \e[m",
                y + 1, 2 * x + 1,
-               255 - y * 10 - 50, x * 200 / COL, 100);
+               255 - y * 200 / ROW - 50, x * 200 / COL, 100);
 }
 
 void undraw_preview(void)
@@ -137,7 +137,7 @@ void draw_shadow(void)
                 int x = g->piece.x + g->piece.b[i * 2];
                 printf("\e[%d;%dH\e[48;2;%d;%d;%dm  \e[m",
                         y + 1, 2 * x + 1,
-                        255 - y * 10 - 50 + 50,
+                        255 - y * 200 / ROW - 50 + 50,
                         x * 200 / COL + 50,
                         100 + 50);
         }
