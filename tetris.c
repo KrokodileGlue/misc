@@ -64,9 +64,9 @@ void draw_score(void)
 void draw_background_cell(int y, int x)
 {
         (void)g;
-        printf("\e[%d;%dH\e[48;2;%d;%d;%dm  \e[0m",
+        printf("\e[%d;%dH\e[48;2;%d;%d;%dm  \e[m",
                y + 1, 2 * x + 1,
-               255 - y * 10 - 50, x * 20, 100);
+               255 - y * 10 - 50, x * 200 / COL, 100);
 }
 
 void undraw_preview(void)
@@ -135,13 +135,32 @@ void draw_shadow(void)
         for (int i = 0; i < 4; i++) {
                 int y = g->piece.y + g->piece.b[i * 2 + 1];
                 int x = g->piece.x + g->piece.b[i * 2];
-                printf("\e[%d;%dH\e[48;2;%d;%d;%dm  \e[0m",
+                printf("\e[%d;%dH\e[48;2;%d;%d;%dm  \e[m",
                         y + 1, 2 * x + 1,
                         255 - y * 10 - 50 + 50,
-                        x * 20 + 50,
+                        x * 200 / COL + 50,
                         100 + 50);
         }
         g->piece.y = tmpy;
+}
+
+void redraw(void)
+{
+        printf("\e[2J");
+
+        for (int y = 0; y < ROW; y++)
+                for (int x = 0; x < COL; x++) {
+                        draw_background_cell(y, x);
+                        if (g->b[y][x])
+                                printf("\e[%d;%dH%s  \e[m",
+                                        y + 1, 2 * x + 1,
+                                        color[g->b[y][x] - 1]);
+                }
+
+        draw_shadow();
+        draw_current();
+        draw_score();
+        draw_preview();
 }
 
 void move_piece(int y, int x)
@@ -200,6 +219,11 @@ void rotate_piece(void)
 }
 
 struct termios term, term_orig;
+
+void sigwinch_handler(int arg)
+{
+        redraw();
+}
 
 void terminate_gracefully(int arg)
 {
@@ -362,6 +386,8 @@ void game_init(void)
          * changes to the terminal happen otherwise.
          */
         signal(SIGINT, terminate_gracefully);
+
+        signal(SIGWINCH, sigwinch_handler);
 
         /* Initialize the actual game state. */
         for (int y = 0; y < ROW; y++)
