@@ -25,6 +25,8 @@ struct game {
 
         timer_t timerid;
         struct itimerspec ts;
+
+        pthread_mutex_t lock;
 } *g;
 
 int levels[] = {
@@ -278,6 +280,8 @@ void hard_drop(void)
 
 int cmd(char move)
 {
+        pthread_mutex_lock(&g->lock);
+
         switch (move) {
         case 'w': rotate_piece(); break;
         case 's':
@@ -289,6 +293,8 @@ int cmd(char move)
         case ' ': hard_drop(); break;
         case 'q': terminate_gracefully(0); break;
         }
+
+        pthread_mutex_unlock(&g->lock);
 
         return 0;
 }
@@ -319,9 +325,10 @@ int setupterminal()
 
 void timer_callback(union sigval arg)
 {
+        pthread_mutex_lock(&g->lock);
         if (will_collide(1, 0)) freeze_piece();
         else move_piece(1, 0);
-
+        pthread_mutex_unlock(&g->lock);
         timer_settime(g->timerid, 0, &g->ts, 0);
 }
 
@@ -329,6 +336,11 @@ void game_init(void)
 {
         /* Make a one second timer spec. */
         g->ts = (struct itimerspec){ .it_value.tv_nsec = ((float)levels[0] / 60.0) * 1000000000 };
+
+        if (pthread_mutex_init(&g->lock, NULL)) {
+                perror("pthread_mutex_init");
+                exit(1);
+        }
 
         /* Create a thread-based timer. */
         timer_create(CLOCK_REALTIME,
