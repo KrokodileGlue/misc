@@ -421,6 +421,25 @@ int main(void)
         while (1) {
                 char move;
                 if (!read(0, &move, 1)) return 1;
-                if (cmd(move)) return 0;
+
+                static char buf[4];
+                static unsigned i;
+
+                if (strchr("wasdq ", move)) {
+                        if (cmd(move)) return 0;
+                        i = 0;
+                } else if (i < sizeof buf) {
+                        buf[i++] = move;
+                        buf[i] = 0;
+                        if (!strcmp(buf, "\e[A")) { i = 0; if (cmd('w')) return 0; }
+                        if (!strcmp(buf, "\e[B")) { i = 0; if (cmd('s')) return 0; }
+                        if (!strcmp(buf, "\e[C")) { i = 0; if (cmd('d')) return 0; }
+                        if (!strcmp(buf, "\e[D")) { i = 0; if (cmd('a')) return 0; }
+                } else {
+                        memmove(buf, buf + 1, sizeof buf - 1);
+                        i--;
+                        buf[i++] = move;
+                        buf[i] = 0;
+                }
         }
 }
