@@ -22,6 +22,7 @@ struct game {
 
         int score, level, lines;
         int next_piece;
+        int paused;
 
         timer_t timerid;
         struct itimerspec ts;
@@ -59,6 +60,8 @@ void draw_score(void)
         printf("\e[%d;%dHscore: %d", ROW / 2, 2 * COL + 2, g->score);
         printf("\e[%d;%dHlevel: %d", ROW / 2 + 1, 2 * COL + 2, g->level);
         printf("\e[%d;%dHlines: %d", ROW / 2 + 2, 2 * COL + 2, g->lines);
+        printf("\e[%d;%dH%s",        ROW / 2 + 3, 2 * COL + 2,
+                g->paused ? "paused" : "      ");
 }
 
 void draw_background_cell(int y, int x)
@@ -287,17 +290,18 @@ void freeze_piece(void)
                 case 4: g->score += 1200 * (g->level + 1); break;
         }
 
-        if (g->lines % 10 > (g->lines + num_cleared) % 10) g->level++;
-        if (g->level >= 20) g->level = 20;
-        g->lines += num_cleared;
-
-        if (num_cleared) {
-                g->ts = (struct itimerspec){ .it_value.tv_nsec = ((float)levels[g->level] / 60.0) * 1000000000.0 };
+        if (g->lines % 10 > (g->lines + num_cleared) % 10) {
+                g->level++;
+                if (g->level >= 20) g->level = 20;
+                g->ts = (struct itimerspec){
+                        .it_interval.tv_nsec = ((float)levels[g->level] / 60.0) * 1000000000.0,
+                        .it_value.tv_nsec = ((float)levels[g->level] / 60.0) * 1000000000.0
+                };
+                timer_settime(g->timerid, 0, &g->ts, 0);
         }
 
+        g->lines += num_cleared;
         draw_score();
-
-        timer_settime(g->timerid, 0, &g->ts, 0);
         pick_piece();
 }
 
@@ -314,16 +318,34 @@ int cmd(char move)
 {
         pthread_mutex_lock(&g->lock);
 
+        if (g->paused && move != 'p') {
+                pthread_mutex_unlock(&g->lock);
+                return 0;
+        }
+
         switch (move) {
+        case 'A':
         case 'w': rotate_piece(); break;
+        case 'B':
         case 's':
                   move_piece(1, 0);
                   timer_settime(g->timerid, 0, &g->ts, 0);
                   break;
+        case 'D':
         case 'a': move_piece(0, -1); break;
+        case 'C':
         case 'd': move_piece(0, 1); break;
         case ' ': hard_drop(); break;
         case 'q': terminate_gracefully(0); break;
+        case 'p':
+                  if (g->paused) {
+                          timer_settime(g->timerid, 0, &g->ts, 0);
+                  } else {
+                          timer_gettime(g->timerid, &g->ts);
+                          timer_settime(g->timerid, 0, &(struct itimerspec){ 0 }, 0);
+                  }
+                  g->paused = !g->paused;
+                  draw_score();
         }
 
         pthread_mutex_unlock(&g->lock);
@@ -361,13 +383,15 @@ void timer_callback(union sigval arg)
         if (will_collide(1, 0)) freeze_piece();
         else move_piece(1, 0);
         pthread_mutex_unlock(&g->lock);
-        timer_settime(g->timerid, 0, &g->ts, 0);
 }
 
 void game_init(void)
 {
         /* Make a one second timer spec. */
-        g->ts = (struct itimerspec){ .it_value.tv_nsec = ((float)levels[0] / 60.0) * 1000000000 };
+        g->ts = (struct itimerspec){
+                .it_interval.tv_nsec = ((float)levels[0] / 60.0) * 1000000000,
+                .it_value.tv_nsec = ((float)levels[0] / 60.0) * 1000000000,
+        };
 
         if (pthread_mutex_init(&g->lock, NULL)) {
                 perror("pthread_mutex_init");
@@ -421,25 +445,6 @@ int main(void)
         while (1) {
                 char move;
                 if (!read(0, &move, 1)) return 1;
-
-                static char buf[4];
-                static unsigned i;
-
-                if (strchr("wasdq ", move)) {
-                        if (cmd(move)) return 0;
-                        i = 0;
-                } else if (i < sizeof buf) {
-                        buf[i++] = move;
-                        buf[i] = 0;
-                        if (!strcmp(buf, "\e[A")) { i = 0; if (cmd('w')) return 0; }
-                        if (!strcmp(buf, "\e[B")) { i = 0; if (cmd('s')) return 0; }
-                        if (!strcmp(buf, "\e[C")) { i = 0; if (cmd('d')) return 0; }
-                        if (!strcmp(buf, "\e[D")) { i = 0; if (cmd('a')) return 0; }
-                } else {
-                        memmove(buf, buf + 1, sizeof buf - 1);
-                        i--;
-                        buf[i++] = move;
-                        buf[i] = 0;
-                }
+                if (cmd(move)) return 0;
         }
 }
